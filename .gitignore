@@ -1,0 +1,39 @@
+# --- Go ---
+*.exe
+*.test
+*.out
+*.prof
+coverage.*
+
+# --- SQLite: база и WAL-артефакты (появятся на итерации 2) ---
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+
+# --- секреты ---
+.env
+.env.*
+!.env.example
+
+# --- IDE / OS ---
+.idea/
+.vscode/
+*.iml
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- личные заметки ---
+/instruction.txt
+/notes.txt
+/struct.png
+/architecture.png
+
+# --- wails3 ---
+.task
+.wails
+bin
+frontend/dist
+frontend/node_modules
