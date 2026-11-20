@@ -1,4 +1,4 @@
-module changeme
+module github.com/WOLFraMix/coffer
 
 go 1.26.0
 
