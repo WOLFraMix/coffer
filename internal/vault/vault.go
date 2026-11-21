@@ -1,9 +1,14 @@
 // Package vault — зашифрованное хранилище секретов Coffer.
 //
-// Формат файла: magic | версия | соль | nonce | AES-256-GCM(JSON).
+// Формат файла: magic | версия | len(соль) | соль | len(nonce) | nonce | AES-256-GCM(JSON).
 // Ключ шифрования выводится из мастер-пароля через argon2id
-// (параметры подобраны так, чтобы деривация занимала ~0.3-0.5с —
+// (параметры подобраны так, чтобы деривация занимала ~0.1-0.5с —
 // намеренно медленно, чтобы удорожать перебор паролей).
+//
+// Два способа работы:
+//   - по паролю (Open/Save) — для разблокировки и создания сейфа;
+//   - по готовому ключу (OpenWithKey/SaveWithKey) — для App-слоя,
+//     который деривирует ключ один раз и не хранит сам пароль.
 package vault
 
 import (
@@ -21,16 +26,22 @@ import (
 	"golang.org/x/crypto/argon2"
 )
 
-// Заголовок файла.
+// Ошибки, на которые UI умеет реагировать осмысленно.
+var (
+	ErrNotFound      = errors.New("vault not found")       // первый запуск — предложить создать
+	ErrWrongPassword = errors.New("wrong master password") // показать «неверный пароль»
+)
+
+// Заголовок файла: опознавательная сигнатура «COFF».
 var magic = []byte("COFF")
 
 const (
 	version      byte = 1
 	saltLen           = 16        // байт соли: 128 бит, стандарт для argon2
 	nonceLen          = 12        // стандартный размер nonce для GCM
-	argonMemory       = 64 * 1024 // 64 МБ — жрём память, а не только CPU
-	argonTime         = 3         // число итераций
-	argonThreads      = 4         // под ваш i7-13620H (8 ядер, 4 хватит)
+	argonMemory       = 64 * 1024 // 64 МБ (в килобайтах — так ждёт argon2.IDKey)
+	argonTime         = 3         // число итераций argon2
+	argonThreads      = 4         // потоки KDF
 	keyLen            = 32        // AES-256: ключ 32 байта
 )
 
@@ -52,9 +63,52 @@ func New(path string) *Vault {
 	return &Vault{path: path}
 }
 
-// Open читает и расшифровывает сейф.
-// Неверный пароль → ошибка (GCM-аутентификация не пройдёт).
+// Path — путь к файлу сейфа (нужно App-слою для проверок).
+func (v *Vault) Path() string { return v.path }
+
+// Exists — существует ли файл сейфа на диске.
+func (v *Vault) Exists() bool {
+	_, err := os.Stat(v.path)
+	return err == nil
+}
+
+// --- парольный API: создание и разблокировка ---
+
+// Save создаёт/перезаписывает сейф по мастер-паролю.
+// Соль берётся из существующего файла или генерируется новая.
+func (v *Vault) Save(password string, entries []Entry) error {
+	if len(entries) == 0 {
+		return errors.New("refusing to save empty vault")
+	}
+
+	salt, err := v.loadSalt()
+	if err != nil {
+		return err
+	}
+	if salt == nil {
+		// Нового сейфа нет на диске — генерируем свежую соль.
+		salt = make([]byte, saltLen)
+		if _, err := rand.Read(salt); err != nil {
+			return fmt.Errorf("rng: %w", err)
+		}
+	}
+	return v.write(deriveKey(password, salt), salt, entries)
+}
+
+// Open читает и расшифровывает сейф по мастер-паролю.
+// Неверный пароль → ErrWrongPassword (GCM-аутентификация не пройдёт).
 func (v *Vault) Open(password string) ([]Entry, error) {
+	key, err := v.DeriveKey(password)
+	if err != nil {
+		return nil, err
+	}
+	return v.OpenWithKey(key)
+}
+
+// DeriveKey читает соль из файла и выводит из пароля 32-байтный ключ.
+// Вызывается App-слоем один раз при разблокировке: дальше сейф
+// работает по ключу, и мастер-пароль нигде не хранится.
+func (v *Vault) DeriveKey(password string) ([]byte, error) {
 	raw, err := os.ReadFile(v.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, ErrNotFound
@@ -62,57 +116,43 @@ func (v *Vault) Open(password string) ([]Entry, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	salt, nonce, ciphertext, err := parseHeader(raw)
+	salt, _, _, err := parseHeader(raw)
 	if err != nil {
 		return nil, err
 	}
-
-	block, err := aes.NewCipher(deriveKey(password, salt))
-	if err != nil {
-		return nil, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-
-	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		// Это и есть «неверный пароль»: GCM падает на проверке тега.
-		return nil, ErrWrongPassword
-	}
-
-	var entries []Entry
-	if err := json.Unmarshal(plaintext, &entries); err != nil {
-		return nil, fmt.Errorf("corrupted vault: %w", err)
-	}
-	return entries, nil
+	return deriveKey(password, salt), nil
 }
 
-// Save шифрует и записывает сейф. Каждый вызов:
-//   - берёт ту же соль (ключ не меняется при том же пароле),
-//     но НОВЫЙ nonce — переиспользование пары (ключ, nonce)
-//     в GCM фатально снижает безопасность;
-//   - пишет файл атомарно: сначала во временный файл, потом rename.
-func (v *Vault) Save(password string, entries []Entry) error {
+// --- ключевой API: работа без пароля ---
+
+// SaveWithKey перезаписывает сейф по готовому ключу.
+// Работает только с уже существующим сейфом: соль нужна для заголовка.
+func (v *Vault) SaveWithKey(key []byte, entries []Entry) error {
 	if len(entries) == 0 {
 		return errors.New("refusing to save empty vault")
 	}
-
-	// Соль: читаем из существующего файла или генерируем новую.
 	salt, err := v.loadSalt()
 	if err != nil {
 		return err
 	}
 	if salt == nil {
-		salt = make([]byte, saltLen)
-		if _, err := rand.Read(salt); err != nil {
-			return fmt.Errorf("rng: %w", err)
-		}
+		return errors.New("vault not initialized: use Save(password) first")
 	}
+	return v.write(key, salt, entries)
+}
 
-	block, err := aes.NewCipher(deriveKey(password, salt))
+// OpenWithKey расшифровывает сейф по готовому ключу.
+func (v *Vault) OpenWithKey(key []byte) ([]Entry, error) {
+	return v.open(key)
+}
+
+// --- внутренности: единая логика чтения/записи ---
+
+// write шифрует и записывает сейф. Каждый вызов берёт НОВЫЙ nonce:
+// переиспользование пары (ключ, nonce) в GCM катастрофично.
+// Пишем атомарно: сначала во временный файл, потом rename.
+func (v *Vault) write(key, salt []byte, entries []Entry) error {
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return err
 	}
@@ -131,19 +171,56 @@ func (v *Vault) Save(password string, entries []Entry) error {
 		return err
 	}
 	ciphertext := gcm.Seal(nil, nonce, plaintext, nil)
-
 	out := buildHeader(salt, nonce, ciphertext)
 
-	// Атомарная запись: сбой питания посреди записи не оставит
-	// наполовину испорченный сейф — rename атомарен на уровне ФС.
+	// 0o600 — права «только владелец»; на Windows работает мягче,
+	// но привычка корректна для кроссплатформенности.
 	tmp := v.path + ".tmp"
-	if err := os.WriteFile(tmp, out, 0o600); err != nil { // только владелец
+	if err := os.WriteFile(tmp, out, 0o600); err != nil {
 		return err
 	}
+	// Атомарная запись: сбой питания посреди записи не оставит
+	// наполовину испорченный сейф — rename атомарен на уровне ФС.
 	return os.Rename(tmp, v.path)
 }
 
-// --- внутренности ---
+// open читает файл, разбирает заголовок и расшифровывает данные.
+func (v *Vault) open(key []byte) ([]Entry, error) {
+	raw, err := os.ReadFile(v.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	_, nonce, ciphertext, err := parseHeader(raw)
+	if err != nil {
+		return nil, err
+	}
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		// Это и есть «неверный пароль» (или испорченный файл):
+		// GCM не различает эти случаи — и то, и другое — подделка.
+		return nil, ErrWrongPassword
+	}
+
+	var entries []Entry
+	if err := json.Unmarshal(plaintext, &entries); err != nil {
+		return nil, fmt.Errorf("corrupted vault: %w", err)
+	}
+	return entries, nil
+}
 
 // deriveKey — argon2id: пароль+соль → 32-байтный ключ AES.
 func deriveKey(password string, salt []byte) []byte {
@@ -151,8 +228,9 @@ func deriveKey(password string, salt []byte) []byte {
 }
 
 // parseHeader разбирает шапку файла и возвращает компоненты.
+// Длины соли и nonce хранятся в самом файле — формат переживёт
+// смену параметров KDF без миграции (версия в заголовке).
 func parseHeader(raw []byte) (salt, nonce, ciphertext []byte, err error) {
-	// 4 (magic) + 1 (версия) + 1 (длина соли) + соль + 1 (длина nonce) + nonce
 	if len(raw) < len(magic)+3 {
 		return nil, nil, nil, errors.New("too short")
 	}
@@ -164,27 +242,26 @@ func parseHeader(raw []byte) (salt, nonce, ciphertext []byte, err error) {
 	}
 
 	pos := len(magic) + 1
-	saltLen := int(raw[pos])
+	sLen := int(raw[pos])
 	pos++
-	if len(raw) < pos+saltLen+1 {
+	if len(raw) < pos+sLen+1 {
 		return nil, nil, nil, errors.New("truncated header")
 	}
-	salt = raw[pos : pos+saltLen]
-	pos += saltLen
+	salt = raw[pos : pos+sLen]
+	pos += sLen
 
-	nonceLen := int(raw[pos])
+	nLen := int(raw[pos])
 	pos++
-	if len(raw) < pos+nonceLen {
+	if len(raw) < pos+nLen {
 		return nil, nil, nil, errors.New("truncated header")
 	}
-	nonce = raw[pos : pos+nonceLen]
-	pos += nonceLen
+	nonce = raw[pos : pos+nLen]
+	pos += nLen
 
 	return salt, nonce, raw[pos:], nil
 }
 
-// buildHeader собирает файл: magic | версия | len(соль)|соль | len(nonce)|nonce | данные.
-// Длины пишем явно — формат переживёт смену параметров KDF в будущем.
+// buildHeader собирает файл целиком.
 func buildHeader(salt, nonce, ciphertext []byte) []byte {
 	out := make([]byte, 0, len(magic)+3+len(salt)+len(nonce)+len(ciphertext))
 	out = append(out, magic...)
@@ -196,11 +273,11 @@ func buildHeader(salt, nonce, ciphertext []byte) []byte {
 	return append(out, ciphertext...)
 }
 
-// loadSalt — вытащить соль из существующего сейфа (или nil, если его нет).
+// loadSalt — вытащить соль из существующего сейфа (или nil, если файла нет).
 func (v *Vault) loadSalt() ([]byte, error) {
 	raw, err := os.ReadFile(v.path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil // новый сейф — соль сгенерируем
+		return nil, nil // нового сейфа нет — соль сгенерирует write-путь
 	}
 	if err != nil {
 		return nil, err
@@ -208,12 +285,6 @@ func (v *Vault) loadSalt() ([]byte, error) {
 	_, salt, _, err := parseHeader(raw)
 	return salt, err
 }
-
-// Ошибки, на которые UI умеет реагировать осмысленно.
-var (
-	ErrNotFound      = errors.New("vault not found")       // первый запуск — предложить создать
-	ErrWrongPassword = errors.New("wrong master password") // показать «неверный пароль»
-)
 
 // DefaultPath — %APPDATA%/Coffer/coffer.cof на Windows.
 // os.UserConfigDir возвращает нужную папку на всех платформах сразу.

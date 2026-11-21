@@ -1,60 +1,197 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
+
 <head>
-    <meta charset="UTF-8"/>
-    <link rel="icon" type="image/svg+xml" href="/wails.png"/>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
-    <link rel="stylesheet" href="/style.css"/>
-    <title>Wails App</title>
+    <meta charset="UTF-8" />
+    <title>Coffer</title>
+    <style>
+        :root {
+            color-scheme: dark;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+        }
+
+        body {
+            font-family: system-ui, sans-serif;
+            background: #12141a;
+            color: #e8e8ef;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding-top: 14vh;
+            min-height: 100vh;
+        }
+
+        h1 {
+            font-size: 22px;
+            margin-bottom: 24px;
+        }
+
+        #unlock,
+        #create {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            align-items: center;
+        }
+
+        #unlock input,
+        #create input {
+            background: #1c1f29;
+            border: 1px solid #2c3140;
+            color: inherit;
+            padding: 10px 14px;
+            border-radius: 8px;
+            width: 280px;
+            font-size: 15px;
+        }
+
+        button {
+            background: #4f7cff;
+            border: 0;
+            color: white;
+            padding: 10px 18px;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            filter: brightness(1.1);
+        }
+
+        #app {
+            display: none;
+            width: 500px;
+        }
+
+        .row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: #1c1f29;
+            border-radius: 10px;
+            padding: 12px 16px;
+            margin-bottom: 8px;
+        }
+
+        .meta {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .issuer {
+            font-size: 12px;
+            color: #8b93a7;
+        }
+
+        .name {
+            font-size: 14px;
+        }
+
+        .right {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .code {
+            font-family: ui-monospace, monospace;
+            font-size: 24px;
+            letter-spacing: 3px;
+            cursor: pointer;
+        }
+
+        .code:hover {
+            color: #4f7cff;
+        }
+
+        .timer {
+            font-size: 11px;
+            color: #8b93a7;
+            width: 34px;
+            text-align: right;
+        }
+
+        .del {
+            background: none;
+            border: 0;
+            color: #8b93a7;
+            font-size: 16px;
+            cursor: pointer;
+            padding: 2px 6px;
+        }
+
+        .del:hover {
+            color: #ff6b6b;
+        }
+
+        form {
+            display: flex;
+            gap: 6px;
+            margin-top: 16px;
+        }
+
+        form input {
+            background: #1c1f29;
+            border: 1px solid #2c3140;
+            color: inherit;
+            padding: 8px;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+
+        #f-issuer {
+            width: 90px;
+        }
+
+        #f-name {
+            width: 110px;
+        }
+
+        #f-secret {
+            width: 150px;
+        }
+
+        #err {
+            color: #ff6b6b;
+            font-size: 13px;
+            margin-top: 12px;
+            min-height: 18px;
+        }
+    </style>
 </head>
+
 <body>
-<!-- Fixed full-bleed background layer (avoids background-attachment:fixed, which
-     is broken in iOS WKWebView). The image swaps to a portrait crop on mobile. -->
-<div class="bg" aria-hidden="true"></div>
+    <h1>🔐 Coffer</h1>
 
-<main class="container">
-    <header class="brand">
-        <a class="brand-mark" data-wml-openURL="https://v3.wails.io" aria-label="Wails website">
-            <img src="/wails.png" class="brand-logo" alt="Wails logo"/>
-        </a>
-        <a class="brand-badge" data-wml-openURL="https://www.typescriptlang.org/" aria-label="TypeScript">
-            <img src="/typescript.svg" alt="TypeScript logo"/>
-        </a>
-    </header>
-
-    <h1 class="title"><span class="title-accent">Wails +</span> <span class="title-name"><span class="title-name-text">TypeScript</span></span></h1>
-    <p class="subtitle">Build beautiful cross-platform apps with Go and TypeScript.</p>
-
-    <div class="greet">
-        <div class="input-box" id="input">
-            <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-            <input aria-label="input" class="input" id="name" type="text" placeholder="Your name" autocomplete="off"/>
-            <button aria-label="greet-btn" id="greet" class="btn">Greet
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
-            </button>
-        </div>
+    <!-- Создание сейфа: первый запуск -->
+    <div id="create" style="display:none">
+        <input id="new-password" type="password" placeholder="Придумайте мастер-пароль" />
+        <input id="new-password2" type="password" placeholder="Повторите пароль" />
+        <button id="btn-create">Создать сейф</button>
     </div>
-</main>
 
-<hr class="footer-divider"/>
-<footer class="footer">
-    <span class="footer-version"><span id="version">v3</span></span>
-    <span class="footer-time">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-        <span id="time">Listening for Time event...</span>
-    </span>
-    <a class="footer-docs" data-wml-openURL="https://v3.wails.io" aria-label="Wails documentation">Docs
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>
-    </a>
-</footer>
+    <!-- Разблокировка: сейф существует -->
+    <div id="unlock" style="display:none">
+        <input id="password" type="password" placeholder="Мастер-пароль" />
+        <button id="btn-unlock">Открыть</button>
+    </div>
 
-<!-- Toast: shows the greeting returned by the Go backend (overlay, so it never
-     reflows the layout). -->
-<div class="toast" id="toast" role="status" aria-live="polite">
-    <span class="toast-label">From Go</span>
-    <span aria-label="result" class="toast-msg" id="result"></span>
-</div>
-
-<script type="module" src="/src/main.js"></script>
+    <!-- Основной экран -->
+    <div id="app">
+        <div id="list"></div>
+        <form id="add">
+            <input id="f-issuer" placeholder="Сервис" />
+            <input id="f-name" placeholder="Аккаунт" />
+            <input id="f-secret" placeholder="Base32-секрет" />
+            <button>Добавить</button>
+        </form>
+    </div>
+    <div id="err"></div>
+    <script type="module" src="/src/main.ts"></script>
 </body>
+
 </html>

@@ -1,65 +1,135 @@
-import {Events, WML} from "@wailsio/runtime";
-import {GreetService} from "../bindings/changeme";
+import { Service } from '../bindings/github.com/WOLFraMix/coffer/internal/app';
 
-// Wire up data-wml-openURL links (logos + footer "Docs" link) once the DOM is ready.
-WML.Enable();
+const $create = document.getElementById('create')!;
+const $unlock = document.getElementById('unlock')!;
+const $app = document.getElementById('app')!;
+const $list = document.getElementById('list')!;
+const $err = document.getElementById('err')!;
 
-const greetButton = document.getElementById('greet')! as HTMLButtonElement;
-const nameElement = document.getElementById('name')! as HTMLInputElement;
-const resultElement = document.getElementById('result')! as HTMLSpanElement;
-const timeElement = document.getElementById('time')! as HTMLSpanElement;
-const titleNameElement = document.querySelector('.title-name')! as HTMLElement;
-const toastElement = document.getElementById('toast')! as HTMLDivElement;
-let toastTimer: ReturnType<typeof setTimeout>;
+function showError(msg: string) { $err.textContent = msg; }
 
-// Show the actual Wails version this project was generated against.
-document.getElementById('version')!.innerText = "v3.1.0";
-
-// Crossfade the framework word in the heading ("Wails + JavaScript") to the name
-// the user entered ("Wails + <name>"): the old word fades out while the new one
-// fades in over the same spot.
-function swapTitleName(name: string) {
-    const current = titleNameElement.querySelector('.title-name-text:not(.is-outgoing)') as HTMLElement | null;
-    if (!current || current.textContent === name) {
-        return;
-    }
-    const incoming = document.createElement('span');
-    incoming.className = 'title-name-text is-entering';
-    incoming.textContent = name;
-    current.classList.add('is-outgoing');
-    titleNameElement.appendChild(incoming);
-    // Force a reflow so the transitions run from the starting state.
-    void incoming.offsetWidth;
-    incoming.classList.remove('is-entering');
-    current.classList.add('is-leaving');
-    current.addEventListener('transitionend', () => current.remove(), {once: true});
-}
-
-// Pop the toast with the message Go returned, then auto-dismiss it.
-function showToast(message: string) {
-    resultElement.innerText = message;
-    toastElement.classList.add('is-visible');
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => toastElement.classList.remove('is-visible'), 4000);
-}
-
-greetButton.addEventListener('click', async () => {
-    let name = nameElement.value;
-    if (!name) {
-        name = 'anonymous';
-    }
-    swapTitleName(name);
+// Отрисовка списка кодов. Вызывается раз в секунду таймером.
+// Пока аккаунтов мало, полная перерисовка дешевле диффинга —
+// оптимизируем, только если станет заметно тормозить.
+async function refresh() {
     try {
-        showToast(await GreetService.Greet(name));
-    } catch (err) {
-        console.error(err);
+        const codes = await Service.Codes();
+        $list.innerHTML = '';
+        for (const c of codes) {
+            const row = document.createElement('div');
+            row.className = 'row';
+            row.innerHTML = `
+        <div class="meta">
+          <span class="issuer">${escapeHtml(c.issuer || '—')}</span>
+          <span class="name">${escapeHtml(c.name)}</span>
+        </div>
+        <div class="right">
+          <span class="code" title="Клик — скопировать">${c.code}</span>
+          <span class="timer">${c.secondsLeft}с</span>
+          <button class="del" title="Удалить">✕</button>
+        </div>`;
+            row.querySelector('.code')!.addEventListener('click', () => {
+                navigator.clipboard.writeText(c.code);
+                showError(`Скопировано: ${c.code}`);
+            });
+            row.querySelector('.del')!.addEventListener('click', async () => {
+                try {
+                    await Service.RemoveAccount(c.id);
+                    await refresh();
+                } catch (e: any) {
+                    showError(e.message || String(e));
+                }
+            });
+            $list.appendChild(row);
+        }
+    } catch (e: any) {
+        // Сейф заблокирован извне (таймер) — покажем экран разблокировки.
+        enterLockedState();
+    }
+}
+
+// Минимальная защита от XSS: имя/сервис вводит сам пользователь.
+function escapeHtml(s: string): string {
+    return s.replace(/[&<>"']/g, (ch) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[ch]!));
+}
+
+// Таймер обновления. Заводим только при открытом сейфе.
+let timer: number | undefined;
+function startTicker() {
+    if (timer === undefined) {
+        timer = window.setInterval(refresh, 1000);
+    }
+}
+function stopTicker() {
+    if (timer !== undefined) {
+        clearInterval(timer);
+        timer = undefined;
+    }
+}
+
+// Определяем, какой экран показывать: создание сейфа или ввод пароля.
+// HasVault возвращает промис — обязательно await, иначе
+// сравнивается сам промис, а не результат (тот всегда «истинный»).
+async function enterLockedState() {
+    stopTicker();
+    $app.style.display = 'none';
+    $list.innerHTML = '';
+
+    const has = await Service.HasVault();
+    $unlock.style.display = has ? 'flex' : 'none';
+    $create.style.display = has ? 'none' : 'flex';
+}
+
+// --- Создание сейфа (первый запуск) ---
+document.getElementById('btn-create')!.addEventListener('click', async () => {
+    const p1 = (document.getElementById('new-password') as HTMLInputElement).value;
+    const p2 = (document.getElementById('new-password2') as HTMLInputElement).value;
+    if (p1 !== p2) { showError('Пароли не совпадают'); return; }
+    try {
+        await Service.CreateVault(p1);
+        showError('');
+        $create.style.display = 'none';
+        $app.style.display = 'block';
+        startTicker();
+        refresh();
+    } catch (e: any) {
+        showError(e.message || String(e));
     }
 });
 
-Events.On('time', (time) => {
-    // The full RFC1123 stamp is too wide for the footer on a phone, so on narrow
-    // screens (matching the CSS breakpoint) we show just the clock time.
-    const full = time.data;
-    const compact = (full.match(/\d{1,2}:\d{2}:\d{2}/) || [full])[0];
-    timeElement.innerText = window.matchMedia('(max-width: 640px)').matches ? compact : full;
+// --- Разблокировка ---
+document.getElementById('btn-unlock')!.addEventListener('click', async () => {
+    const pwd = (document.getElementById('password') as HTMLInputElement).value;
+    try {
+        await Service.Unlock(pwd);
+        showError('');
+        $unlock.style.display = 'none';
+        $app.style.display = 'block';
+        startTicker();
+        refresh();
+    } catch (e: any) {
+        // ErrWrongPassword приходит как ошибка биндинга — показываем текст.
+        showError('Неверный пароль');
+    }
 });
+
+// --- Добавление аккаунта ---
+document.getElementById('add')!.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const issuer = (document.getElementById('f-issuer') as HTMLInputElement).value;
+    const name = (document.getElementById('f-name') as HTMLInputElement).value;
+    const secret = (document.getElementById('f-secret') as HTMLInputElement).value;
+    try {
+        await Service.AddAccount(issuer, name, secret);
+        (document.getElementById('f-secret') as HTMLInputElement).value = '';
+        showError('');
+        refresh();
+    } catch (err: any) {
+        showError(err.message || String(err));
+    }
+});
+
+// --- Старт: какой экран показывать ---
+enterLockedState();
