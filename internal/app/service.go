@@ -3,9 +3,11 @@
 package app
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 	"time"
@@ -53,6 +55,7 @@ func (s *Service) HasVault() bool {
 func (s *Service) CreateVault(password string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	debugFingerprint("create", password)
 
 	if len(password) < 8 {
 		return errors.New("мастер-пароль — минимум 8 символов")
@@ -71,6 +74,17 @@ func (s *Service) CreateVault(password string) error {
 		return fmt.Errorf("не удалось создать сейф: %w", err)
 	}
 
+	// САМОПРОВЕРКА: сейф обязан открываться тем же паролем сразу после
+	// создания. Если нет — баг в криптографии, и мы узнаём об этом
+	// в момент создания, а не при следующем запуске.
+	check, err := s.v.Open(password)
+	if err != nil {
+		return fmt.Errorf("БАГ: сейф создан, но не открывается тем же паролем: %v", err)
+	}
+	if len(check) != len(entries) {
+		return fmt.Errorf("БАГ: после создания в сейфе %d аккаунтов вместо %d", len(check), len(entries))
+	}
+
 	key, err := s.v.DeriveKey(password)
 	if err != nil {
 		return err
@@ -83,6 +97,7 @@ func (s *Service) CreateVault(password string) error {
 func (s *Service) Unlock(password string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	debugFingerprint("unlock", password)
 
 	key, err := s.v.DeriveKey(password)
 	if err != nil {
@@ -210,4 +225,25 @@ func (s *Service) viewsLocked(now time.Time) []CodeView {
 		}
 	}
 	return views
+}
+
+// debugFingerprint — ВРЕМЕННЫЙ инструмент отладки (удалить перед релизом!).
+// Пишет в %APPDATA%/Coffer/debug.log отпечаток ВВОДА: длину пароля
+// и первые 8 hex-символов SHA-256. Сам пароль не сохраняется,
+// но этого достаточно, чтобы точно различить два разных ввода:
+// «qwertyuiop[]» латиницей и «qwertyuiopхъ» русской раскладкой
+// выглядят на экране одинаково, а отпечатки — нет.
+func debugFingerprint(kind, password string) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(dir, "Coffer", "debug.log"),
+		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600) //nolint:gosec // путь фиксированный из UserConfigDir
+	if err != nil {
+		return
+	}
+	defer func() { _ = f.Close() }()
+	sum := sha256.Sum256([]byte(password))
+	fmt.Fprintf(f, "%s: len=%d sha=%x\n", kind, len(password), sum[:4]) //nolint:errcheck // диагностика не должна ломать работу
 }

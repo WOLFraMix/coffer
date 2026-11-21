@@ -1,15 +1,17 @@
 // cofferctl — консольная утилита-диагност сейфа Coffer.
-// Команды: open (проверить пароль), inspect (разбор файла),
-// reset (удалить сейф целиком).
+// Команды: open (проверить пароль), create (создать сейф из консоли),
+// inspect (разбор файла), reset (удалить сейф целиком).
 package main
 
 import (
 	"bufio"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/WOLFraMix/coffer/internal/vault"
 )
@@ -26,15 +28,56 @@ func main() {
 	if len(os.Args) > 1 {
 		cmd = os.Args[1]
 	}
-
 	switch cmd {
-	case "reset":
-		reset(path)
+	case "create":
+		create(path)
 	case "inspect":
 		inspect(path)
+	case "reset":
+		reset(path)
 	default:
 		openFlow(path)
 	}
+}
+
+func readPassword(prompt string) string {
+	fmt.Print(prompt)
+	pw, _ := bufio.NewReader(os.Stdin).ReadString('\n') //nolint:errcheck // консольный диагност
+	return strings.TrimSuffix(strings.TrimSuffix(pw, "\n"), "\r")
+}
+
+// create — бисекция: если сейф, созданный из CLI, открывается из GUI,
+// проблема в пути создания UI; если нет — в пути разблокировки UI.
+// Перед выходом сейф проверяется СВЕЖИМ экземпляром Vault: соль
+// читается из файла заново, ровно как это сделает другой процесс.
+func create(path string) {
+	if vault.New(path).Exists() {
+		fmt.Println("Сейф уже существует. Сначала: cofferctl reset")
+		os.Exit(1)
+	}
+	pw1 := readPassword("Придумайте пароль: ")
+	pw2 := readPassword("Повторите пароль:   ")
+	if pw1 != pw2 {
+		fmt.Println("ОШИБКА: пароли не совпадают")
+		os.Exit(1)
+	}
+	entries := []vault.Entry{{
+		Name: "example@mail.com", Issuer: "Пример",
+		Secret: "JBSWY3DPEHPK3PXP", CreatedAt: time.Now(),
+	}}
+	if err := vault.New(path).Save(pw1, entries); err != nil {
+		fmt.Println("ОШИБКА:", err)
+		os.Exit(1)
+	}
+
+	// Самопроверка СВЕЖИМ экземпляром: у него нет кэша соли, она
+	// читается из файла — ровно как при запуске нового процесса.
+	// Ловит баг «nonce вместо соли» в момент создания, а не при входе.
+	if _, err := vault.New(path).Open(pw1); err != nil {
+		fmt.Println("БАГ: сейф создан, но не открывается заново:", err)
+		os.Exit(1)
+	}
+	fmt.Println("OK: сейф создан и проверен повторным чтением.")
 }
 
 func openFlow(path string) {
@@ -43,23 +86,20 @@ func openFlow(path string) {
 		fmt.Println("Файл не найден:", err)
 		os.Exit(1)
 	}
-	fmt.Printf("Размер: %d байт (минимум валидного файла: 51; меньше — файл обрезан)\n", st.Size())
+	fmt.Printf("Размер: %d байт (минимум валидного: 53)\n", st.Size())
 
-	fmt.Print("Введите пароль: ")
-	pw, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-	pw = strings.TrimSuffix(strings.TrimSuffix(pw, "\n"), "\r")
-
+	pw := readPassword("Введите пароль: ")
 	entries, err := vault.New(path).Open(pw)
-	switch err {
-	case nil:
+	switch {
+	case err == nil:
 		fmt.Printf("OK: сейф открылся, аккаунтов: %d\n", len(entries))
 		for _, e := range entries {
 			fmt.Printf("  - %s / %s\n", e.Issuer, e.Name)
 		}
-	case vault.ErrCorrupted:
-		fmt.Println("ОШИБКА: файл сейфа повреждён (обрезан). Лечится: cofferctl reset")
+	case errors.Is(err, vault.ErrCorrupted):
+		fmt.Println("ОШИБКА: файл сейфа повреждён. Лечится: cofferctl reset")
 		os.Exit(1)
-	case vault.ErrWrongPassword:
+	case errors.Is(err, vault.ErrWrongPassword):
 		fmt.Println("ОШИБКА: неверный мастер-пароль")
 		os.Exit(1)
 	default:
@@ -69,22 +109,35 @@ func openFlow(path string) {
 }
 
 func inspect(path string) {
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) //nolint:gosec // путь из DefaultPath приложения
 	if err != nil {
 		fmt.Println("Файл не найден:", err)
 		os.Exit(1)
 	}
-	fmt.Printf("Размер: %d байт\n", len(raw))
-	if len(raw) >= 6 {
-		fmt.Printf("Magic: %q  версия: %d  заявленная соль: %d байт, nonce: %d байт\n",
-			string(raw[0:4]), raw[4], raw[5], raw[5+int(raw[5])+1])
+	fmt.Printf("Размер: %d байт (минимум валидного: 53)\n", len(raw))
+	if len(raw) < 6 {
+		fmt.Println("Файл короче шапки — обрезан.")
+		return
 	}
-	n := 64
-	if len(raw) < n {
-		n = len(raw)
+	sLen := int(raw[5])
+	if len(raw) < 6+sLen+1 {
+		fmt.Println("Шапка обрезана — файл повреждён.")
+		return
 	}
-	fmt.Println("Первые байты (hex):")
-	fmt.Println(hex.Dump(raw[:n]))
+	salt := raw[6 : 6+sLen]
+	pos := 6 + sLen
+	nLen := int(raw[pos])
+	pos++
+	if len(raw) < pos+nLen {
+		fmt.Println("Шапка обрезана — файл повреждён.")
+		return
+	}
+	nonce := raw[pos : pos+nLen]
+	pos += nLen
+	fmt.Printf("Magic: %q  версия: %d\n", string(raw[0:4]), raw[4])
+	fmt.Printf("Соль  (%2d байт): %s\n", sLen, hex.EncodeToString(salt))
+	fmt.Printf("Nonce (%2d байт): %s\n", nLen, hex.EncodeToString(nonce))
+	fmt.Printf("Шифротекст: %d байт\n", len(raw)-pos)
 }
 
 func reset(path string) {
@@ -92,14 +145,13 @@ func reset(path string) {
 		fmt.Println("ОШИБКА:", err)
 		os.Exit(1)
 	}
-	// Подчищаем tmp-файлы всех процессов.
 	dir := filepath.Dir(path)
-	entries, _ := os.ReadDir(dir)
+	entries, _ := os.ReadDir(dir) //nolint:errcheck // диагностика
 	for _, e := range entries {
 		name := e.Name()
 		if strings.HasPrefix(name, filepath.Base(path)+".") && strings.HasSuffix(name, ".tmp") {
-			_ = os.Remove(filepath.Join(dir, name))
+			_ = os.Remove(filepath.Join(dir, name)) //nolint:errcheck // диагностика
 		}
 	}
-	fmt.Println("Сейф удалён. Запустите приложение и создайте новый.")
+	fmt.Println("Сейф удалён (если существовал). Запустите приложение и создайте новый.")
 }

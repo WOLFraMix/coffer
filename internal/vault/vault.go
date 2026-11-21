@@ -82,7 +82,7 @@ func (v *Vault) getSalt() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	_, salt, _, err := parseHeader(raw)
+	salt, _, _, err := parseHeader(raw) // первое значение — соль, а не nonce
 	if err != nil {
 		return nil, err
 	}

@@ -85,3 +85,25 @@ func TestSaveRefusesEmpty(t *testing.T) {
 		t.Error("empty vault must not be saved")
 	}
 }
+
+// Круговорот через РАЗНЫЕ экземпляры: writer сохраняет, reader
+// открывает. У reader'а нет кэша соли — она читается из файла,
+// ровно как при запуске нового процесса. Именно такой тест поймал
+// бы баг «nonce вместо соли» на этапе, а не в бою.
+func TestRoundtripFreshInstance(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cross.cof")
+
+	writer := New(path)
+	if err := writer.Save("pw", sampleEntries()); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	reader := New(path) // новый экземпляр — как новый процесс
+	got, err := reader.Open("pw")
+	if err != nil {
+		t.Fatalf("fresh instance open: %v", err)
+	}
+	if len(got) != 1 || got[0].Secret != sampleEntries()[0].Secret {
+		t.Errorf("mismatch: %+v", got)
+	}
+}
