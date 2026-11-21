@@ -1,9 +1,6 @@
 // Package otp — генерация одноразовых паролей TOTP (RFC 6238).
 //
-// Реализация совместима с Google Authenticator и большинством
-// сервисов: период 30 секунд, SHA-1, 6 цифр, секрет в Base32.
-// Пишем сами на stdlib, чтобы понимать алгоритм, а не доверять
-// его чёрному ящику.
+// Совместим с Google Authenticator: период 30 секунд, SHA-1, 6 цифр.
 package otp
 
 import (
@@ -18,14 +15,18 @@ import (
 )
 
 const (
-	Period  = 30 * time.Second // окно одного кода
+	Period  = 30 * time.Second // окно одного кода (Duration — в наносекундах!)
 	Digits  = 6                // длина кода
 	modulus = 1_000_000        // 10^Digits: остаток даёт 6 цифр
+
+	// periodSecs — длительность окна в СЕКУНДАХ. Отдельная константа,
+	// потому что int(Period) дал бы 30 млрд наносекунд — на этом мы
+	// уже погорели: «2999999999с» вместо «30с».
+	periodSecs = int64(Period / time.Second)
 )
 
 // Generate возвращает текущий код и число секунд до его смены.
-// now передаётся явно — это делает функцию детерминированной и
-// тривиально тестируемой (в тестах подставляем фиксированное время).
+// now передаётся явно — функция детерминирована и тривиально тестируема.
 func Generate(secret string, now time.Time) (code string, secondsLeft int, err error) {
 	key, err := decodeBase32(secret)
 	if err != nil {
@@ -33,7 +34,7 @@ func Generate(secret string, now time.Time) (code string, secondsLeft int, err e
 	}
 
 	// Счётчик времени: сколько 30-секундных окон прошло с эпохи.
-	counter := uint64(now.Unix()) / uint64(Period.Seconds())
+	counter := uint64(now.Unix()) / uint64(periodSecs)
 
 	// HMAC-SHA1: ключ — секрет, сообщение — счётчик (big-endian).
 	mac := hmac.New(sha1.New, key)
@@ -42,21 +43,17 @@ func Generate(secret string, now time.Time) (code string, secondsLeft int, err e
 	mac.Write(buf[:])
 	sum := mac.Sum(nil)
 
-	// Динамическое усечение (RFC 4226, §5.3):
-	// младшие 4 бита последнего байта — смещение в 20-байтовом HMAC.
+	// Динамическое усечение (RFC 4226, §5.3).
 	offset := sum[len(sum)-1] & 0x0f
-	// 4 байта со смещения; & 0x7fffffff сбрасывает знаковый бит,
-	// чтобы число гарантированно было положительным.
 	value := binary.BigEndian.Uint32(sum[offset:offset+4]) & 0x7fffffff
 
 	code = fmt.Sprintf("%06d", value%modulus)
-	secondsLeft = int(Period) - int(now.Unix()%int64(Period.Seconds()))
+	// Остаток окна: сколько секунд прошло в текущем окне, вычитаем из 30.
+	secondsLeft = int(periodSecs - now.Unix()%periodSecs)
 	return code, secondsLeft, nil
 }
 
-// decodeBase32 — парсит секрет, простив пользователю пробелы,
-// регистр и пустые строки. Base32 от сервисов бывает и с пробелами
-// по 4 символа ("JBSW Y3DP EHPK 3PXP"), чистим обязательно.
+// decodeBase32 прощает пробелы, регистр и пустые строки.
 func decodeBase32(s string) ([]byte, error) {
 	s = strings.ToUpper(strings.ReplaceAll(s, " ", ""))
 	if s == "" {

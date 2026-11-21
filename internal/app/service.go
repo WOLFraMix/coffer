@@ -5,6 +5,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"sync"
 	"time"
@@ -13,8 +14,7 @@ import (
 	"github.com/WOLFraMix/coffer/internal/vault"
 )
 
-// Account — метаданные аккаунта для UI. Секрет наружу не отдаём:
-// фронтенду он не нужен, а лишних копий чувствительных данных быть не должно.
+// Account — метаданные аккаунта для UI. Секрет наружу не отдаём.
 type Account struct {
 	ID     int    `json:"id"`
 	Issuer string `json:"issuer"`
@@ -28,24 +28,21 @@ type CodeView struct {
 	SecondsLeft int    `json:"secondsLeft"`
 }
 
-// Service — состояние приложения: где сейф, открыт ли он.
-// Все методы защищены мьютексом: Wails может звать их из разных
-// горутин параллельно, а мы читаем/пишем общий слайс entries.
+// Service — состояние приложения. Все методы под мьютексом:
+// Wails может звать их параллельно из разных горутин.
 type Service struct {
 	mu      sync.Mutex
 	v       *vault.Vault
-	key     []byte        // производный ключ; пароль после разблокировки забываем
+	key     []byte        // производный ключ; пароль после разблокировки не храним
 	entries []vault.Entry // расшифрованные данные — только в памяти
 	open    bool
 }
 
-// NewService создаёт сервис для сейфа по пути path.
 func NewService(path string) *Service {
 	return &Service{v: vault.New(path)}
 }
 
-// HasVault — есть ли сейф на диске. Фронтенд по этому флагу решает,
-// показывать ли «создание сейфа» или «ввод пароля».
+// HasVault — есть ли сейф на диске (первый запуск?).
 func (s *Service) HasVault() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -53,7 +50,6 @@ func (s *Service) HasVault() bool {
 }
 
 // CreateVault — первый запуск: создать сейф с мастер-паролем.
-// Внутри уже лежит демо-аккаунт, чтобы UI не был пустым.
 func (s *Service) CreateVault(password string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -68,14 +64,13 @@ func (s *Service) CreateVault(password string) error {
 	entries := []vault.Entry{{
 		Name:      "example@mail.com",
 		Issuer:    "Пример",
-		Secret:    "JBSWY3DPEHPK3PXP", // демо-секрет для проверки совместимости TOTP
+		Secret:    "JBSWY3DPEHPK3PXP",
 		CreatedAt: time.Now(),
 	}}
 	if err := s.v.Save(password, entries); err != nil {
 		return fmt.Errorf("не удалось создать сейф: %w", err)
 	}
 
-	// Деривируем ключ один раз и работаем дальше по нему.
 	key, err := s.v.DeriveKey(password)
 	if err != nil {
 		return err
@@ -91,7 +86,7 @@ func (s *Service) Unlock(password string) error {
 
 	key, err := s.v.DeriveKey(password)
 	if err != nil {
-		return err // ErrNotFound / ErrWrongPassword UI обрабатывает сам
+		return err
 	}
 	entries, err := s.v.OpenWithKey(key)
 	if err != nil {
@@ -101,32 +96,46 @@ func (s *Service) Unlock(password string) error {
 	return nil
 }
 
-// Lock — забыть данные: по кнопке или по таймеру автоблокировки.
+// Lock — забыть данные в памяти (кнопка или таймер автоблокировки).
 func (s *Service) Lock() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lockLocked()
 }
 
-// lockLocked — внутренняя блокировка (вызывается под мьютексом).
-// Зануление слайса не гарантирует стирание байтов из памяти GC,
-// но это разумный компромисс для desktop-приложения.
 func (s *Service) lockLocked() {
 	s.entries = nil
 	s.key = nil
 	s.open = false
 }
 
-// IsUnlocked — фронтенд спрашивает это при старте, чтобы выбрать экран.
+// IsUnlocked — фронтенд спрашивает при старте, чтобы выбрать экран.
 func (s *Service) IsUnlocked() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.open
 }
 
+// ResetVault — удалить сейф с диска целиком (без пароля!).
+//
+// Почему это не дыра в безопасности: без мастер-пароля секреты
+// невосстановимы в любом случае, а файл может стереть из проводника
+// любой, кто сидит за этим же компьютером. Кнопка лишь экономит
+// поход в %APPDATA% — сама поверхность атаки не меняется.
+func (s *Service) ResetVault() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.lockLocked()
+	if err := os.Remove(s.v.Path()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("не удалось удалить сейф: %w", err)
+	}
+	// Подчищаем возможный остаток атомарной записи.
+	_ = os.Remove(s.v.Path() + ".tmp")
+	return nil
+}
+
 // Codes — пересчитать текущие TOTP-коды для всех аккаунтов.
-// Фронтенд дергает это раз в секунду: HMAC на 20 байтах копеечный,
-// зато UI всегда консистентен и не рассинхронизируется с бэкендом.
 func (s *Service) Codes() ([]CodeView, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -138,7 +147,6 @@ func (s *Service) Codes() ([]CodeView, error) {
 }
 
 // AddAccount — добавить аккаунт по секрету из формы.
-// Секрет проверяем сразу генерацией: битый Base32 отклоняем до записи.
 func (s *Service) AddAccount(issuer, name, secret string) ([]CodeView, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -150,7 +158,7 @@ func (s *Service) AddAccount(issuer, name, secret string) ([]CodeView, error) {
 		return nil, errors.New("укажите хотя бы имя аккаунта")
 	}
 	if name == "" {
-		name = issuer // без имени показываем хотя бы сервис
+		name = issuer
 	}
 	if _, _, err := otp.Generate(secret, time.Now()); err != nil {
 		return nil, fmt.Errorf("неверный секрет: %w", err)
@@ -159,17 +167,14 @@ func (s *Service) AddAccount(issuer, name, secret string) ([]CodeView, error) {
 	s.entries = append(s.entries, vault.Entry{
 		Name: name, Issuer: issuer, Secret: secret, CreatedAt: time.Now(),
 	})
-
-	// Перезаписываем сейф готовым ключом. Если запись упала —
-	// откатываем добавление, чтобы память и диск не разъехались.
 	if err := s.v.SaveWithKey(s.key, s.entries); err != nil {
-		s.entries = s.entries[:len(s.entries)-1]
+		s.entries = s.entries[:len(s.entries)-1] // откат при ошибке записи
 		return nil, fmt.Errorf("не удалось сохранить сейф: %w", err)
 	}
 	return s.viewsLocked(time.Now()), nil
 }
 
-// RemoveAccount — удалить аккаунт по ID (ID — позиция в списке).
+// RemoveAccount — удалить аккаунт по ID (позиция в списке).
 func (s *Service) RemoveAccount(id int) ([]CodeView, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -181,7 +186,6 @@ func (s *Service) RemoveAccount(id int) ([]CodeView, error) {
 		return nil, fmt.Errorf("нет аккаунта с id=%d", id)
 	}
 
-	// slices.Delete вырезает элемент и сдвигает хвост — stdlib, Go 1.21+.
 	s.entries = slices.Delete(s.entries, id, id+1)
 
 	if err := s.v.SaveWithKey(s.key, s.entries); err != nil {
@@ -190,7 +194,7 @@ func (s *Service) RemoveAccount(id int) ([]CodeView, error) {
 	return s.viewsLocked(time.Now()), nil
 }
 
-// viewsLocked — пересчёт кодов для UI (вызывается под мьютексом).
+// viewsLocked — пересчёт кодов для UI (под мьютексом).
 // Битый секрет не роняет весь список — показываем прочерк.
 func (s *Service) viewsLocked(now time.Time) []CodeView {
 	views := make([]CodeView, len(s.entries))

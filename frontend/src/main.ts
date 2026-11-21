@@ -6,11 +6,15 @@ const $app = document.getElementById('app')!;
 const $list = document.getElementById('list')!;
 const $err = document.getElementById('err')!;
 
+// Показываем НАСТОЯЩИЙ текст ошибки биндинга, а не придуманный.
+// Именно это раньше маскировало причину под «Неверный пароль».
+function errText(e: unknown): string {
+    if (typeof e === 'string') return e;
+    const any = e as { message?: string };
+    return any?.message ?? String(e);
+}
 function showError(msg: string) { $err.textContent = msg; }
 
-// Отрисовка списка кодов. Вызывается раз в секунду таймером.
-// Пока аккаунтов мало, полная перерисовка дешевле диффинга —
-// оптимизируем, только если станет заметно тормозить.
 async function refresh() {
     try {
         const codes = await Service.Codes();
@@ -25,9 +29,10 @@ async function refresh() {
         </div>
         <div class="right">
           <span class="code" title="Клик — скопировать">${c.code}</span>
-          <span class="timer">${c.secondsLeft}с</span>
+          <span class="timer" title="Секунд до смены кода">${c.secondsLeft}</span>
           <button class="del" title="Удалить">✕</button>
-        </div>`;
+        </div>
+        <div class="bar"><i style="width:${(c.secondsLeft / 30) * 100}%"></i></div>`;
             row.querySelector('.code')!.addEventListener('click', () => {
                 navigator.clipboard.writeText(c.code);
                 showError(`Скопировано: ${c.code}`);
@@ -35,52 +40,47 @@ async function refresh() {
             row.querySelector('.del')!.addEventListener('click', async () => {
                 try {
                     await Service.RemoveAccount(c.id);
+                    showError('');
                     await refresh();
-                } catch (e: any) {
-                    showError(e.message || String(e));
+                } catch (e) {
+                    showError(errText(e));
                 }
             });
             $list.appendChild(row);
         }
-    } catch (e: any) {
-        // Сейф заблокирован извне (таймер) — покажем экран разблокировки.
+    } catch (e) {
         enterLockedState();
     }
 }
 
-// Минимальная защита от XSS: имя/сервис вводит сам пользователь.
 function escapeHtml(s: string): string {
     return s.replace(/[&<>"']/g, (ch) => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
     }[ch]!));
 }
 
-// Таймер обновления. Заводим только при открытом сейфе.
 let timer: number | undefined;
 function startTicker() {
-    if (timer === undefined) {
-        timer = window.setInterval(refresh, 1000);
-    }
+    if (timer === undefined) timer = window.setInterval(refresh, 1000);
 }
 function stopTicker() {
-    if (timer !== undefined) {
-        clearInterval(timer);
-        timer = undefined;
-    }
+    if (timer !== undefined) { clearInterval(timer); timer = undefined; }
 }
 
-// Определяем, какой экран показывать: создание сейфа или ввод пароля.
-// HasVault возвращает промис — обязательно await, иначе
-// сравнивается сам промис, а не результат (тот всегда «истинный»).
-async function enterLockedState() {
+function enterLockedState() {
     stopTicker();
     $app.style.display = 'none';
     $list.innerHTML = '';
-
-    const has = await Service.HasVault();
-    $unlock.style.display = has ? 'flex' : 'none';
-    $create.style.display = has ? 'none' : 'flex';
+    Service.HasVault().then(has => {
+        $unlock.style.display = has ? 'flex' : 'none';
+        $create.style.display = has ? 'none' : 'flex';
+    });
 }
+
+// Enter в поле пароля = нажать «Открыть» (мелочь, а приятно).
+document.getElementById('password')!.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') (document.getElementById('btn-unlock') as HTMLButtonElement).click();
+});
 
 // --- Создание сейфа (первый запуск) ---
 document.getElementById('btn-create')!.addEventListener('click', async () => {
@@ -93,9 +93,9 @@ document.getElementById('btn-create')!.addEventListener('click', async () => {
         $create.style.display = 'none';
         $app.style.display = 'block';
         startTicker();
-        refresh();
-    } catch (e: any) {
-        showError(e.message || String(e));
+        await refresh();
+    } catch (e) {
+        showError(errText(e));
     }
 });
 
@@ -108,12 +108,42 @@ document.getElementById('btn-unlock')!.addEventListener('click', async () => {
         $unlock.style.display = 'none';
         $app.style.display = 'block';
         startTicker();
-        refresh();
-    } catch (e: any) {
-        // ErrWrongPassword приходит как ошибка биндинга — показываем текст.
-        showError('Неверный пароль');
+        await refresh();
+    } catch (e) {
+        // Реальный текст: «wrong master password», «vault not found»
+        // или что-то ещё — теперь мы это увидим, а не будем гадать.
+        showError(errText(e));
     }
 });
+
+// --- Сброс сейфа: двухшаговое подтверждение вместо window.confirm ---
+// Нативные диалоги в WebView могут быть подавлены, а двойной клик —
+// простая и надёжная альтернатива.
+let resetArmed: number | undefined;
+document.getElementById('btn-reset')!.addEventListener('click', async (e) => {
+    const btn = e.currentTarget as HTMLButtonElement;
+    if (resetArmed === undefined) {
+        btn.textContent = 'Точно удалить? Все коды пропадут. Нажмите ещё раз';
+        btn.classList.add('danger');
+        resetArmed = window.setTimeout(disarmReset, 4000);
+        return;
+    }
+    disarmReset();
+    try {
+        await Service.ResetVault();
+        (document.getElementById('password') as HTMLInputElement).value = '';
+        showError('');
+        enterLockedState();
+    } catch (err) {
+        showError(errText(err));
+    }
+});
+function disarmReset() {
+    if (resetArmed !== undefined) { clearTimeout(resetArmed); resetArmed = undefined; }
+    const btn = document.getElementById('btn-reset')!;
+    btn.textContent = 'Забыли пароль? Сбросить сейф…';
+    btn.classList.remove('danger');
+}
 
 // --- Добавление аккаунта ---
 document.getElementById('add')!.addEventListener('submit', async (e) => {
@@ -126,10 +156,9 @@ document.getElementById('add')!.addEventListener('submit', async (e) => {
         (document.getElementById('f-secret') as HTMLInputElement).value = '';
         showError('');
         refresh();
-    } catch (err: any) {
-        showError(err.message || String(err));
+    } catch (err) {
+        showError(errText(err));
     }
 });
 
-// --- Старт: какой экран показывать ---
 enterLockedState();
