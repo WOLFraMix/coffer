@@ -4,10 +4,9 @@ import (
 	"embed"
 	"log"
 
-	"github.com/wailsapp/wails/v3/pkg/application"
-
 	"github.com/WOLFraMix/coffer/internal/app"
 	"github.com/WOLFraMix/coffer/internal/vault"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // Wails встраивает собранный фронтенд (frontend/dist) прямо в бинарник:

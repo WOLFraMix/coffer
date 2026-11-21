@@ -5,7 +5,7 @@ package otp
 
 import (
 	"crypto/hmac"
-	"crypto/sha1"
+	"crypto/sha1" //nolint:gosec // SHA-1 в HMAC обязателен стандартом TOTP (RFC 6238), это не уязвимость
 	"encoding/base32"
 	"encoding/binary"
 	"errors"

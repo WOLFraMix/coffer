@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -174,7 +175,7 @@ func javaMajorVersion() (int, error) {
 	}
 	match := javaVersionPattern.FindStringSubmatch(string(output))
 	if len(match) != 2 {
-		return 0, fmt.Errorf("unrecognised java version output")
+		return 0, errors.New("unrecognised java version output")
 	}
 	return strconv.Atoi(match[1])
 }

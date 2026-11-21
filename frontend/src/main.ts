@@ -7,7 +7,6 @@ const $list = document.getElementById('list')!;
 const $err = document.getElementById('err')!;
 
 // Показываем НАСТОЯЩИЙ текст ошибки биндинга, а не придуманный.
-// Именно это раньше маскировало причину под «Неверный пароль».
 function errText(e: unknown): string {
     if (typeof e === 'string') return e;
     const any = e as { message?: string };
@@ -17,7 +16,9 @@ function showError(msg: string) { $err.textContent = msg; }
 
 async function refresh() {
     try {
-        const codes = await Service.Codes();
+        // Go возвращает слайс; пустой список сериализуется как null,
+        // поэтому ?? [] — не перестраховка, а обработка реального null.
+        const codes = (await Service.Codes()) ?? [];
         $list.innerHTML = '';
         for (const c of codes) {
             const row = document.createElement('div');
@@ -49,7 +50,13 @@ async function refresh() {
             $list.appendChild(row);
         }
     } catch (e) {
-        enterLockedState();
+        // «vault is locked» — штатный путь (сейф закрыт), прочие ошибки показываем.
+        const msg = errText(e);
+        if (msg.includes('locked')) {
+            enterLockedState();
+        } else {
+            showError(msg);
+        }
     }
 }
 
@@ -77,7 +84,6 @@ function enterLockedState() {
     });
 }
 
-// Enter в поле пароля = нажать «Открыть» (мелочь, а приятно).
 document.getElementById('password')!.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') (document.getElementById('btn-unlock') as HTMLButtonElement).click();
 });
@@ -110,15 +116,12 @@ document.getElementById('btn-unlock')!.addEventListener('click', async () => {
         startTicker();
         await refresh();
     } catch (e) {
-        // Реальный текст: «wrong master password», «vault not found»
-        // или что-то ещё — теперь мы это увидим, а не будем гадать.
+        // Теперь честно: «wrong master password», «vault file is corrupted» и т.д.
         showError(errText(e));
     }
 });
 
-// --- Сброс сейфа: двухшаговое подтверждение вместо window.confirm ---
-// Нативные диалоги в WebView могут быть подавлены, а двойной клик —
-// простая и надёжная альтернатива.
+// --- Сброс сейфа: двухшаговое подтверждение ---
 let resetArmed: number | undefined;
 document.getElementById('btn-reset')!.addEventListener('click', async (e) => {
     const btn = e.currentTarget as HTMLButtonElement;

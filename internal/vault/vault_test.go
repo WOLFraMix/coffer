@@ -15,8 +15,10 @@ func newTestVault(t *testing.T) *Vault {
 
 func sampleEntries() []Entry {
 	return []Entry{
-		{Name: "user@example.com", Issuer: "GitHub",
-			Secret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", CreatedAt: time.Now()},
+		{
+			Name: "user@example.com", Issuer: "GitHub",
+			Secret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", CreatedAt: time.Now(),
+		},
 	}
 }
 
