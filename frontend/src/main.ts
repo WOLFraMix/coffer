@@ -6,7 +6,6 @@ const $app = document.getElementById('app')!;
 const $list = document.getElementById('list')!;
 const $err = document.getElementById('err')!;
 
-// Показываем НАСТОЯЩИЙ текст ошибки биндинга, а не придуманный.
 function errText(e: unknown): string {
     if (typeof e === 'string') return e;
     const any = e as { message?: string };
@@ -16,8 +15,6 @@ function showError(msg: string) { $err.textContent = msg; }
 
 async function refresh() {
     try {
-        // Go возвращает слайс; пустой список сериализуется как null,
-        // поэтому ?? [] — не перестраховка, а обработка реального null.
         const codes = (await Service.Codes()) ?? [];
         $list.innerHTML = '';
         for (const c of codes) {
@@ -50,7 +47,6 @@ async function refresh() {
             $list.appendChild(row);
         }
     } catch (e) {
-        // «vault is locked» — штатный путь (сейф закрыт), прочие ошибки показываем.
         const msg = errText(e);
         if (msg.includes('locked')) {
             enterLockedState();
@@ -74,6 +70,21 @@ function stopTicker() {
     if (timer !== undefined) { clearInterval(timer); timer = undefined; }
 }
 
+// --- Активность: Touch не чаще раза в 10 секунд ---
+// mousemove/keydown сглаживаются: без троттлинга IPC-вызовы
+// сыпались бы сотнями в секунду при каждом движении мыши.
+let lastTouchSent = 0;
+function touch() {
+    const now = Date.now();
+    if (now - lastTouchSent > 10_000) {
+        lastTouchSent = now;
+        Service.Touch();
+    }
+}
+for (const ev of ['mousemove', 'keydown', 'pointerdown']) {
+    document.addEventListener(ev, touch);
+}
+
 function enterLockedState() {
     stopTicker();
     $app.style.display = 'none';
@@ -88,13 +99,16 @@ document.getElementById('password')!.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') (document.getElementById('btn-unlock') as HTMLButtonElement).click();
 });
 
-// --- Создание сейфа (первый запуск) ---
+// --- Создание сейфа ---
 document.getElementById('btn-create')!.addEventListener('click', async () => {
     const p1 = (document.getElementById('new-password') as HTMLInputElement).value;
     const p2 = (document.getElementById('new-password2') as HTMLInputElement).value;
     if (p1 !== p2) { showError('Пароли не совпадают'); return; }
+    if (p1.length < 8) { showError('Минимум 8 символов'); return; }
     try {
         await Service.CreateVault(p1);
+        (document.getElementById('new-password') as HTMLInputElement).value = '';
+        (document.getElementById('new-password2') as HTMLInputElement).value = '';
         showError('');
         $create.style.display = 'none';
         $app.style.display = 'block';
@@ -116,7 +130,6 @@ document.getElementById('btn-unlock')!.addEventListener('click', async () => {
         startTicker();
         await refresh();
     } catch (e) {
-        // Теперь честно: «wrong master password», «vault file is corrupted» и т.д.
         showError(errText(e));
     }
 });
@@ -148,14 +161,28 @@ function disarmReset() {
     btn.classList.remove('danger');
 }
 
-// --- Добавление аккаунта ---
+// --- Добавление аккаунта: валидация до отправки ---
+// Базовые проверки дублируют бэкенд — не ради параноидальности,
+// а ради мгновенного отклика: не гоняем вызов IPC, чтобы узнать то,
+// что видно из длины строки.
+function validateSecret(secret: string): string | null {
+    const s = secret.replace(/\s+/g, '').toUpperCase();
+    if (s.length === 0) return 'Введите секрет';
+    if (!/^[A-Z2-7]+$/.test(s)) return 'Секрет: только латиница A–Z и цифры 2–7 (Base32)';
+    if (s.length < 16) return 'Слишком короткий секрет (минимум 16 символов)';
+    if (s.length % 8 !== 0) return 'Длина секрета должна быть кратна 8 (сейчас ' + s.length + ')';
+    return null;
+}
+
 document.getElementById('add')!.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const issuer = (document.getElementById('f-issuer') as HTMLInputElement).value;
-    const name = (document.getElementById('f-name') as HTMLInputElement).value;
-    const secret = (document.getElementById('f-secret') as HTMLInputElement).value;
+    const issuer = (document.getElementById('f-issuer') as HTMLInputElement).value.trim();
+    const name = (document.getElementById('f-name') as HTMLInputElement).value.trim();
+    const rawSecret = (document.getElementById('f-secret') as HTMLInputElement).value;
+    const problem = validateSecret(rawSecret);
+    if (problem) { showError(problem); return; }
     try {
-        await Service.AddAccount(issuer, name, secret);
+        await Service.AddAccount(issuer, name, rawSecret);
         (document.getElementById('f-secret') as HTMLInputElement).value = '';
         showError('');
         refresh();

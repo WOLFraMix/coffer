@@ -51,7 +51,7 @@ export function IsUnlocked(): $CancellablePromise<boolean> {
 }
 
 /**
- * Lock — забыть данные в памяти (кнопка или таймер автоблокировки).
+ * Lock — забыть данные в памяти (кнопка или сторож).
  */
 export function Lock(): $CancellablePromise<void> {
     return $Call.ByID(3261029075);
@@ -65,15 +65,18 @@ export function RemoveAccount(id: number): $CancellablePromise<$models.CodeView[
 }
 
 /**
- * ResetVault — удалить сейф с диска целиком (без пароля!).
- * 
- * Почему это не дыра в безопасности: без мастер-пароля секреты
- * невосстановимы в любом случае, а файл может стереть из проводника
- * любой, кто сидит за этим же компьютером. Кнопка лишь экономит
- * поход в %APPDATA% — сама поверхность атаки не меняется.
+ * ResetVault — удалить сейф с диска (без пароля: секреты всё равно
+ * невосстановимы без него, а файл стёр бы любой процесс от имени юзера).
  */
 export function ResetVault(): $CancellablePromise<void> {
     return $Call.ByID(3353867277);
+}
+
+/**
+ * Touch — отметка активности от фронтенда (mousemove/keydown).
+ */
+export function Touch(): $CancellablePromise<void> {
+    return $Call.ByID(2782998403);
 }
 
 /**

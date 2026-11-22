@@ -301,3 +301,12 @@ func DefaultPath() (string, error) {
 	}
 	return filepath.Join(dir, "coffer.cof"), nil
 }
+
+// Remove удаляет файл сейфа (и возможный остаток tmp-записи).
+func (v *Vault) Remove() error {
+	if err := os.Remove(v.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	_ = os.Remove(v.path + ".tmp")
+	return nil
+}

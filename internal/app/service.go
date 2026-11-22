@@ -5,7 +5,6 @@ package app
 import (
 	"errors"
 	"fmt"
-	"os"
 	"slices"
 	"sync"
 	"time"
@@ -36,10 +35,42 @@ type Service struct {
 	key     []byte        // производный ключ; пароль после разблокировки не храним
 	entries []vault.Entry // расшифрованные данные — только в памяти
 	open    bool
+
+	lastTouch time.Time     // последнее действие пользователя
+	lockAfter time.Duration // бездействие до автоблокировки
 }
 
+// lockAfter по умолчанию: 5 минут бездействия. Позже вынесем в настройки.
+const defaultLockAfter = 5 * time.Minute
+
 func NewService(path string) *Service {
-	return &Service{v: vault.New(path)}
+	s := &Service{v: vault.New(path), lockAfter: defaultLockAfter}
+	// Фоновый сторож: раз в 10 секунд проверяет бездействие и
+	// закрывает сейф. Гонится всю жизнь процесса — копейки.
+	go s.idleLoop()
+	return s
+}
+
+// idleLoop — сторож автоблокировки. Опрос Codes() активностью НЕ
+// считается: он бежит и когда пользователь ушёл. Только реальные
+// касания (Touch) продлевают жизнь открытого сейфа.
+func (s *Service) idleLoop() {
+	tick := time.NewTicker(10 * time.Second)
+	defer tick.Stop()
+	for range tick.C {
+		s.mu.Lock()
+		if s.open && !s.lastTouch.IsZero() && time.Since(s.lastTouch) > s.lockAfter {
+			s.lockLocked()
+		}
+		s.mu.Unlock()
+	}
+}
+
+// Touch — отметка активности от фронтенда (mousemove/keydown).
+func (s *Service) Touch() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastTouch = time.Now()
 }
 
 // HasVault — есть ли сейф на диске (первый запуск?).
@@ -71,9 +102,8 @@ func (s *Service) CreateVault(password string) error {
 		return fmt.Errorf("не удалось создать сейф: %w", err)
 	}
 
-	// САМОПРОВЕРКА: сейф обязан открываться тем же паролем сразу после
-	// создания. Если нет — баг в криптографии, и мы узнаём об этом
-	// в момент создания, а не при следующем запуске.
+	// Самопроверка: сейф обязан открываться тем же паролем сразу
+	// после создания (ловит порчу файла в момент записи).
 	check, err := s.v.Open(password)
 	if err != nil {
 		return fmt.Errorf("БАГ: сейф создан, но не открывается тем же паролем: %v", err)
@@ -87,6 +117,7 @@ func (s *Service) CreateVault(password string) error {
 		return err
 	}
 	s.key, s.entries, s.open = key, entries, true
+	s.lastTouch = time.Now()
 	return nil
 }
 
@@ -104,10 +135,11 @@ func (s *Service) Unlock(password string) error {
 		return err
 	}
 	s.key, s.entries, s.open = key, entries, true
+	s.lastTouch = time.Now()
 	return nil
 }
 
-// Lock — забыть данные в памяти (кнопка или таймер автоблокировки).
+// Lock — забыть данные в памяти (кнопка или сторож).
 func (s *Service) Lock() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -127,22 +159,16 @@ func (s *Service) IsUnlocked() bool {
 	return s.open
 }
 
-// ResetVault — удалить сейф с диска целиком (без пароля!).
-//
-// Почему это не дыра в безопасности: без мастер-пароля секреты
-// невосстановимы в любом случае, а файл может стереть из проводника
-// любой, кто сидит за этим же компьютером. Кнопка лишь экономит
-// поход в %APPDATA% — сама поверхность атаки не меняется.
+// ResetVault — удалить сейф с диска (без пароля: секреты всё равно
+// невосстановимы без него, а файл стёр бы любой процесс от имени юзера).
 func (s *Service) ResetVault() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.lockLocked()
-	if err := os.Remove(s.v.Path()); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := s.v.Remove(); err != nil {
 		return fmt.Errorf("не удалось удалить сейф: %w", err)
 	}
-	// Подчищаем возможный остаток атомарной записи.
-	_ = os.Remove(s.v.Path() + ".tmp")
 	return nil
 }
 
@@ -198,7 +224,6 @@ func (s *Service) RemoveAccount(id int) ([]CodeView, error) {
 	}
 
 	s.entries = slices.Delete(s.entries, id, id+1)
-
 	if err := s.v.SaveWithKey(s.key, s.entries); err != nil {
 		return nil, fmt.Errorf("не удалось сохранить сейф: %w", err)
 	}
@@ -206,7 +231,6 @@ func (s *Service) RemoveAccount(id int) ([]CodeView, error) {
 }
 
 // viewsLocked — пересчёт кодов для UI (под мьютексом).
-// Битый секрет не роняет весь список — показываем прочерк.
 func (s *Service) viewsLocked(now time.Time) []CodeView {
 	views := make([]CodeView, len(s.entries))
 	for i, e := range s.entries {
