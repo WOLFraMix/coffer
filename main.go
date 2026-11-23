@@ -1,28 +1,28 @@
 package main
 
 import (
+	"bytes"
 	"embed"
+	"image"
+	"image/color"
+	"image/png"
 	"log"
+
+	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 
 	"github.com/WOLFraMix/coffer/internal/app"
 	"github.com/WOLFraMix/coffer/internal/vault"
-	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-// Wails встраивает собранный фронтенд (frontend/dist) прямо в бинарник:
-// готовый exe не требует ни браузера, ни локального сервера.
-// См. https://pkg.go.dev/embed
-//
 //go:embed all:frontend/dist
 var assets embed.FS
 
 func main() {
-	// Путь к сейфу: %APPDATA%/Coffer/coffer.cof на Windows.
 	path, err := vault.DefaultPath()
 	if err != nil {
 		log.Fatal(err)
 	}
-
 	svc := app.NewService(path)
 
 	a := application.New(application.Options{
@@ -32,7 +32,6 @@ func main() {
 			application.NewService(svc),
 		},
 		Assets: application.AssetOptions{
-			// AssetFileServerFS раздаёт встроенные файлы фронтенда.
 			Handler: application.AssetFileServerFS(assets),
 		},
 		Mac: application.MacOptions{
@@ -40,18 +39,96 @@ func main() {
 		},
 	})
 
-	// Одно окно под наш список кодов.
-	a.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:  "Coffer",
-		Width:  520,
-		Height: 640,
-		// Цвет фона совпадает с фоном UI (#12141a), чтобы не мигало белым при загрузке.
+	win := a.Window.NewWithOptions(application.WebviewWindowOptions{
+		Title:            "Coffer",
+		Width:            520,
+		Height:           640,
 		BackgroundColour: application.NewRGB(18, 20, 26),
 		URL:              "/",
 	})
 
-	// Блокируем выполнение до закрытия приложения.
+	// --- Трей ---
+	tray := a.SystemTray.New()
+	tray.SetIcon(trayIcon())
+	tray.SetTooltip("Coffer — коды 2FA")
+
+	// Меню: собрать -> повесить обработчики -> назначить трею.
+	// OnClick у MenuItem принимает func(*Context): контекст не нужен,
+	// но сигнатуру менять нельзя — иначе не скомпилируется.
+	menu := application.NewMenu()
+	menu.Add("Показать окно").OnClick(func(*application.Context) {
+		win.Show()
+		win.Focus()
+	})
+	menu.Add("Заблокировать сейчас").OnClick(func(*application.Context) {
+		svc.Lock()
+	})
+	menu.AddSeparator()
+	menu.Add("Выход").OnClick(func(*application.Context) {
+		a.Quit()
+	})
+	tray.SetMenu(menu)
+
+	// Левый клик по иконке: показать/спрятать окно.
+	tray.OnClick(func() {
+		tray.ToggleWindow()
+	})
+	tray.Show()
+
+	// --- Закрытие окна = сворачивание в трей ---
+	// Перехватываем событие закрытия: окно не уничтожаем, а прячем.
+	// Приложение остаётся жить в трее — как менеджер паролей и должен.
+	win.OnWindowEvent(events.Common.WindowClosing, func(*application.WindowEvent) {
+		win.Hide()
+	})
+
 	if err := a.Run(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// trayIcon рисует иконку 32×32 в коде: синий круг + белый замок.
+func trayIcon() []byte {
+	const size = 32
+	img := image.NewRGBA(image.Rect(0, 0, size, size))
+	bg := color.RGBA{R: 0x4f, G: 0x7c, B: 0xff, A: 0xff}
+	fg := color.RGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
+	transparent := color.RGBA{A: 0}
+
+	// Круг с прозрачным краем.
+	for y := 0; y < size; y++ {
+		for x := 0; x < size; x++ {
+			dx, dy := x-16, y-16
+			if dx*dx+dy*dy <= 15*15 {
+				img.Set(x, y, bg)
+			} else {
+				img.Set(x, y, transparent)
+			}
+		}
+	}
+	// Дужка замка: кольцо радиуса 4 вокруг (16,13), верхняя половина.
+	for y := 0; y < size; y++ {
+		if y > 13 {
+			break
+		}
+		for x := 0; x < size; x++ {
+			dx, dy := x-16, y-13
+			d2 := dx*dx + dy*dy
+			if d2 <= 16 && d2 >= 4 {
+				img.Set(x, y, fg)
+			}
+		}
+	}
+	// Корпус замка.
+	for y := 13; y < 22; y++ {
+		for x := 10; x < 22; x++ {
+			img.Set(x, y, fg)
+		}
+	}
+
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return nil
+	}
+	return buf.Bytes()
 }
