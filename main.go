@@ -78,8 +78,9 @@ func main() {
 	// --- Закрытие окна = сворачивание в трей ---
 	// Перехватываем событие закрытия: окно не уничтожаем, а прячем.
 	// Приложение остаётся жить в трее — как менеджер паролей и должен.
-	win.OnWindowEvent(events.Common.WindowClosing, func(*application.WindowEvent) {
-		win.Hide()
+	win.OnWindowEvent(events.Common.WindowClosing, func(e *application.WindowEvent) {
+		e.Cancel() // отменяем закрытие: окно не уничтожается
+		win.Hide() // прячем — приложение продолжает жить в трее
 	})
 
 	if err := a.Run(); err != nil {
