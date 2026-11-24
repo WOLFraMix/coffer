@@ -107,3 +107,20 @@ func TestRoundtripFreshInstance(t *testing.T) {
 		t.Errorf("mismatch: %+v", got)
 	}
 }
+
+func TestEncodeDecodeRoundtrip(t *testing.T) {
+	data, err := Encode("backup-pw", sampleEntries())
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	got, err := Decode("backup-pw", data)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 1 || got[0].Secret != sampleEntries()[0].Secret {
+		t.Errorf("mismatch: %+v", got)
+	}
+	if _, err := Decode("wrong", data); err != ErrWrongPassword {
+		t.Errorf("want ErrWrongPassword, got %v", err)
+	}
+}

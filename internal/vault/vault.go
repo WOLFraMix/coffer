@@ -310,3 +310,65 @@ func (v *Vault) Remove() error {
 	_ = os.Remove(v.path + ".tmp")
 	return nil
 }
+
+// Encode шифрует записи в полный файл сейфа со свежей солью и nonce.
+// Используется для резервных копий: файл независим от основного сейфа —
+// своя соль, свой ключ, своё место на диске.
+func Encode(password string, entries []Entry) ([]byte, error) {
+	if len(entries) == 0 {
+		return nil, errors.New("refusing to encode empty vault")
+	}
+	salt := make([]byte, saltLen)
+	if _, err := rand.Read(salt); err != nil {
+		return nil, fmt.Errorf("rng: %w", err)
+	}
+	block, err := aes.NewCipher(deriveKey(password, salt))
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	nonce := make([]byte, nonceLen)
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, fmt.Errorf("rng: %w", err)
+	}
+	plaintext, err := json.Marshal(entries)
+	if err != nil {
+		return nil, err
+	}
+	ciphertext := gcm.Seal(nil, nonce, plaintext, nil)
+	return buildHeader(salt, nonce, ciphertext), nil
+}
+
+// Decode расшифровывает данные файла сейфа по паролю.
+func Decode(password string, raw []byte) ([]Entry, error) {
+	if len(raw) < minFileLen {
+		return nil, ErrCorrupted
+	}
+	salt, nonce, ciphertext, err := parseHeader(raw)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrCorrupted, err)
+	}
+	block, err := aes.NewCipher(deriveKey(password, salt))
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	if len(ciphertext) < gcm.Overhead() {
+		return nil, ErrCorrupted
+	}
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return nil, ErrWrongPassword
+	}
+	var entries []Entry
+	if err := json.Unmarshal(plaintext, &entries); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrCorrupted, err)
+	}
+	return entries, nil
+}

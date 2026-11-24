@@ -2,239 +2,65 @@
 <html lang="ru">
 
 <head>
-    <meta charset="UTF-8" />
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Coffer</title>
-    <style>
-        :root {
-            color-scheme: dark;
-        }
-
-        * {
-            box-sizing: border-box;
-            margin: 0;
-        }
-
-        body {
-            font-family: system-ui, sans-serif;
-            background: #12141a;
-            color: #e8e8ef;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            padding-top: 14vh;
-            min-height: 100vh;
-        }
-
-        h1 {
-            font-size: 22px;
-            margin-bottom: 24px;
-        }
-
-        #unlock,
-        #create {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            align-items: center;
-        }
-
-        #unlock input,
-        #create input {
-            background: #1c1f29;
-            border: 1px solid #2c3140;
-            color: inherit;
-            padding: 10px 14px;
-            border-radius: 8px;
-            width: 280px;
-            font-size: 15px;
-        }
-
-        button {
-            background: #4f7cff;
-            border: 0;
-            color: white;
-            padding: 10px 18px;
-            border-radius: 8px;
-            cursor: pointer;
-        }
-
-        button:hover {
-            filter: brightness(1.1);
-        }
-
-        button.ghost {
-            background: transparent;
-            color: #8b93a7;
-            font-size: 12px;
-            padding: 6px 10px;
-            text-decoration: underline;
-        }
-
-        button.ghost:hover {
-            color: #ff6b6b;
-        }
-
-        button.danger {
-            background: #c0392b;
-        }
-
-        #app {
-            display: none;
-            width: 500px;
-        }
-
-        /* Строка аккаунта: позиционируемся относительно, чтобы
-       прогресс-бар прилегал к нижней грани на всю ширину строки */
-        .row {
-            position: relative;
-            overflow: hidden;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            background: #1c1f29;
-            border-radius: 10px;
-            padding: 12px 16px 14px;
-            margin-bottom: 8px;
-        }
-
-        .meta {
-            display: flex;
-            flex-direction: column;
-            min-width: 0;
-        }
-
-        .issuer {
-            font-size: 12px;
-            color: #8b93a7;
-        }
-
-        .name {
-            font-size: 14px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        .right {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .code {
-            font-family: ui-monospace, monospace;
-            font-size: 24px;
-            letter-spacing: 3px;
-            cursor: pointer;
-        }
-
-        .code:hover {
-            color: #4f7cff;
-        }
-
-        .timer {
-            font-size: 12px;
-            color: #8b93a7;
-            min-width: 2ch;
-            text-align: right;
-            font-variant-numeric: tabular-nums;
-        }
-
-        .del {
-            background: none;
-            border: 0;
-            color: #8b93a7;
-            font-size: 15px;
-            cursor: pointer;
-            padding: 4px 2px;
-        }
-
-        .del:hover {
-            color: #ff6b6b;
-        }
-
-        /* Тонкий прогресс-бар: ширина = доля оставшегося окна кода */
-        .bar {
-            position: absolute;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            height: 3px;
-            background: rgba(79, 124, 255, .15);
-        }
-
-        .bar i {
-            display: block;
-            height: 100%;
-            background: #4f7cff;
-            border-radius: 0 2px 2px 0;
-        }
-
-        form {
-            display: flex;
-            gap: 6px;
-            margin-top: 16px;
-        }
-
-        form input {
-            background: #1c1f29;
-            border: 1px solid #2c3140;
-            color: inherit;
-            padding: 8px;
-            border-radius: 6px;
-            font-size: 13px;
-        }
-
-        #f-issuer {
-            width: 90px;
-        }
-
-        #f-name {
-            width: 110px;
-        }
-
-        #f-secret {
-            width: 150px;
-        }
-
-        #err {
-            color: #ff6b6b;
-            font-size: 13px;
-            margin-top: 12px;
-            min-height: 18px;
-        }
-    </style>
+    <link rel="stylesheet" href="src/style.css">
 </head>
 
 <body>
-    <h1>🔐 Coffer</h1>
-
-    <!-- Создание сейфа: первый запуск -->
-    <div id="create" style="display:none">
-        <input id="new-password" type="password" placeholder="Придумайте мастер-пароль" />
-        <input id="new-password2" type="password" placeholder="Повторите пароль" />
+    <!-- Создание сейфа (первый запуск) -->
+    <section id="create" class="card" style="display:none">
+        <h1>🔐 Coffer</h1>
+        <p class="hint">Придумайте мастер-пароль. Он не восстанавливается:
+            потеряете — потеряете все коды.</p>
+        <input id="new-password" type="password" placeholder="Мастер-пароль (мин. 8)">
+        <input id="new-password2" type="password" placeholder="Повторите пароль">
         <button id="btn-create">Создать сейф</button>
-    </div>
+        <p id="err"></p>
+    </section>
 
-    <!-- Разблокировка: сейф существует -->
-    <div id="unlock" style="display:none">
-        <input id="password" type="password" placeholder="Мастер-пароль" />
+    <!-- Разблокировка -->
+    <section id="unlock" class="card" style="display:none">
+        <h1>🔐 Coffer</h1>
+        <input id="password" type="password" placeholder="Мастер-пароль">
         <button id="btn-unlock">Открыть</button>
-        <button id="btn-reset" class="ghost">Забыли пароль? Сбросить сейф…</button>
-    </div>
+        <a id="btn-reset" href="#">Забыли пароль? Сбросить сейф…</a>
+        <p id="err"></p>
+    </section>
 
     <!-- Основной экран -->
-    <div id="app">
-        <div id="list"></div>
+    <main id="app" style="display:none">
+        <h1>🔐 Coffer</h1>
+
+        <!-- Поиск и резервные копии -->
+        <div id="tools">
+            <input id="search" type="text" placeholder="Поиск по сервису или имени…">
+            <div class="backup">
+                <input id="backup-password" type="password" placeholder="Пароль копии">
+                <button id="btn-export" class="ghost" type="button">Экспорт копии</button>
+            </div>
+            <div class="backup">
+                <input id="import-path" type="text" placeholder="Путь к .cofbak">
+                <input id="import-password" type="password" placeholder="Пароль копии">
+                <button id="btn-import" class="ghost" type="button">Импорт</button>
+            </div>
+        </div>
+
+        <!-- Форма добавления аккаунта -->
         <form id="add">
-            <input id="f-issuer" placeholder="Сервис" />
-            <input id="f-name" placeholder="Аккаунт" />
-            <input id="f-secret" placeholder="Base32-секрет" />
-            <button>Добавить</button>
+            <input id="f-issuer" placeholder="Сервис">
+            <input id="f-name" placeholder="Аккаунт">
+            <input id="f-secret" placeholder="Base32-секрет">
+            <button type="submit">Добавить</button>
         </form>
-    </div>
-    <div id="err"></div>
-    <script type="module" src="/src/main.ts"></script>
+
+        <div id="list"></div>
+        <a id="btn-lock" href="#">Заблокировать</a>
+        <p id="err"></p>
+    </main>
+
+    <script type="module" src="src/main.ts"></script>
 </body>
 
 </html>

@@ -5,6 +5,8 @@ package app
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 	"time"
@@ -245,4 +247,76 @@ func (s *Service) viewsLocked(now time.Time) []CodeView {
 		}
 	}
 	return views
+}
+
+// ExportBackup — зашифрованный дамп всех записей отдельным паролем.
+// Возвращает путь к файлу, чтобы UI показал его пользователю.
+func (s *Service) ExportBackup(password string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.open {
+		return "", errors.New("vault is locked")
+	}
+	if len(password) < 8 {
+		return "", errors.New("пароль резервной копии — минимум 8 символов")
+	}
+
+	data, err := vault.Encode(password, s.entries)
+	if err != nil {
+		return "", err
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(home, "Documents")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir,
+		fmt.Sprintf("coffer-backup-%s.cofbak", time.Now().Format("20060102-150405")))
+	if err := os.WriteFile(path, data, 0o600); err != nil { //nolint:gosec // путь строим сами из UserHomeDir
+		return "", fmt.Errorf("не удалось записать копию: %w", err)
+	}
+	return path, nil
+}
+
+// ImportBackup — читает резервную копию и добавляет записи, которых
+// ещё нет. Дубликаты (сервис+имя+секрет) пропускаются: слияние,
+// а не затирание. Возвращает количество добавленных.
+func (s *Service) ImportBackup(path, password string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.open {
+		return 0, errors.New("vault is locked")
+	}
+	raw, err := os.ReadFile(path) //nolint:gosec // путь задаёт пользователь в поле ввода
+	if err != nil {
+		return 0, fmt.Errorf("не удалось прочитать файл: %w", err)
+	}
+	imported, err := vault.Decode(password, raw)
+	if err != nil {
+		return 0, err
+	}
+
+	before := len(s.entries)
+	for _, e := range imported {
+		dup := slices.ContainsFunc(s.entries, func(x vault.Entry) bool {
+			return x.Issuer == e.Issuer && x.Name == e.Name && x.Secret == e.Secret
+		})
+		if !dup {
+			s.entries = append(s.entries, e)
+		}
+	}
+	added := len(s.entries) - before
+	if added == 0 {
+		return 0, nil // нечего писать — сейф не трогаем
+	}
+	if err := s.v.SaveWithKey(s.key, s.entries); err != nil {
+		s.entries = s.entries[:before] // откат при ошибке записи
+		return 0, fmt.Errorf("не удалось сохранить сейф: %w", err)
+	}
+	return added, nil
 }

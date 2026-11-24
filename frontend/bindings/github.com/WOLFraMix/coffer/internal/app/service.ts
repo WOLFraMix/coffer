@@ -37,10 +37,27 @@ export function CreateVault(password: string): $CancellablePromise<void> {
 }
 
 /**
+ * ExportBackup — зашифрованный дамп всех записей отдельным паролем.
+ * Возвращает путь к файлу, чтобы UI показал его пользователю.
+ */
+export function ExportBackup(password: string): $CancellablePromise<string> {
+    return $Call.ByID(2587185500, password);
+}
+
+/**
  * HasVault — есть ли сейф на диске (первый запуск?).
  */
 export function HasVault(): $CancellablePromise<boolean> {
     return $Call.ByID(2717378120);
+}
+
+/**
+ * ImportBackup — читает резервную копию и добавляет записи, которых
+ * ещё нет. Дубликаты (сервис+имя+секрет) пропускаются: слияние,
+ * а не затирание. Возвращает количество добавленных.
+ */
+export function ImportBackup(path: string, password: string): $CancellablePromise<number> {
+    return $Call.ByID(2554384755, path, password);
 }
 
 /**

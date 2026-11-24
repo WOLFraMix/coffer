@@ -1,0 +1,235 @@
+:root {
+    --bg: #12141a;
+    --panel: #1a1d26;
+    --panel-2: #232733;
+    --text: #e8eaf0;
+    --muted: #8b91a3;
+    --accent: #4f7cff;
+    --accent-2: #6c8dff;
+    --danger: #ff5c5c;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    padding: 20px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+}
+
+h1 {
+    text-align: center;
+    font-size: 22px;
+    margin: 8px 0 20px;
+}
+
+.card {
+    max-width: 420px;
+    margin: 60px auto 0;
+    background: var(--panel);
+    border: 1px solid #2a2e3a;
+    border-radius: 12px;
+    padding: 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.hint {
+    color: var(--muted);
+    font-size: 13px;
+    margin: 0;
+}
+
+input {
+    background: var(--panel-2);
+    border: 1px solid #2e3342;
+    border-radius: 8px;
+    color: var(--text);
+    padding: 10px 12px;
+    font-size: 14px;
+    outline: none;
+    min-width: 0;
+}
+
+input:focus {
+    border-color: var(--accent);
+}
+
+input::placeholder {
+    color: var(--muted);
+}
+
+button {
+    background: var(--accent);
+    border: none;
+    border-radius: 8px;
+    color: #fff;
+    padding: 10px 16px;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+button:hover {
+    background: var(--accent-2);
+}
+
+button.ghost {
+    background: transparent;
+    border: 1px solid #2e3342;
+    color: var(--text);
+}
+
+button.ghost:hover {
+    border-color: var(--accent);
+}
+
+#tools {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+#tools .backup {
+    display: flex;
+    gap: 8px;
+}
+
+#tools .backup input {
+    flex: 1;
+}
+
+#add {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+#add input {
+    flex: 1;
+}
+
+#add button {
+    flex: none;
+}
+
+.row {
+    background: var(--panel);
+    border: 1px solid #2a2e3a;
+    border-radius: 10px;
+    padding: 10px 14px 12px;
+    margin-bottom: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.row .meta {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+}
+
+.row .issuer {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.row .name {
+    font-size: 14px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.row .right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.row .code {
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.row .code:active {
+    color: var(--accent-2);
+}
+
+.row .timer {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.row .del {
+    background: transparent;
+    color: var(--muted);
+    padding: 4px 8px;
+    font-size: 13px;
+}
+
+.row .del:hover {
+    color: var(--danger);
+}
+
+.row .bar {
+    width: 100%;
+    height: 3px;
+    background: #2a2e3a;
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.row .bar i {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+    transition: width 1s linear;
+}
+
+#btn-lock {
+    color: var(--muted);
+    font-size: 13px;
+}
+
+#btn-lock:hover {
+    color: var(--text);
+}
+
+#btn-reset {
+    color: var(--muted);
+    font-size: 13px;
+    text-align: center;
+}
+
+#btn-reset:hover {
+    color: var(--text);
+}
+
+#btn-reset.danger {
+    color: var(--danger);
+}
+
+.empty {
+    color: var(--muted);
+    text-align: center;
+    padding: 16px 0;
+}
+
+#err {
+    color: var(--danger);
+    font-size: 13px;
+    min-height: 18px;
+    margin: 8px 0 0;
+}
