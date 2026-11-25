@@ -1,59 +1,56 @@
-# Welcome to Your New Wails3 Project!
+# 🔐 Coffer
 
-Congratulations on generating your Wails3 application! This README will guide you through the next steps to get your project up and running.
+Локальный аутентификатор 2FA: коды TOTP без облаков. Ваша копия — ваши ключи: секреты хранятся в шифрованном сейфе на вашем диске, ни один сервер ничего не знает.
 
-## Getting Started
+## Возможности
 
-1. Navigate to your project directory in the terminal.
+- **TOTP-коды** (RFC 6238) с обратным отсчётом и прогресс-баром — как в Google Authenticator, но на рабочем столе
+- **Шифрованный сейф** — AES-GCM, ключ выводится из мастер-пароля (PBKDF2), пароль нигде не хранится
+- **Автоблокировка** по простою — сейф закрывается сам, если вы не трогали окно 5 минут
+- **Системный трей** — коды всегда под рукой, окно закрывается в трей, а не насовсем
+- **Резервные копии** — экспорт/импорт зашифрованного файла с отдельным паролем, импорт сливает данные, не затирая существующее
+- **Поиск** по сервисам и аккаунтам
+- **CLI** — `cofferctl create/open/reset` для диагностики и автоматизации
 
-2. To run your application in development mode, use the following command:
+## Сборка
 
-   ```
-   wails3 dev
-   ```
+Требуется: Go 1.22+, Node.js 18+, [Wails CLI v3](https://v3.wails.io/).
 
-   This will start your application and enable hot-reloading for both frontend and backend changes.
+```powershell
+wails3 task build      # сборка GUI (bin/coffer.exe)
+go build ./cmd/cofferctl  # сборка CLI
+```
 
-3. To build your application for production, use:
+## Тесты
 
-   ```
-   wails3 build
-   ```
+```powershell
+go test ./... -count=1
+```
 
-   This will create a production-ready executable in the `build` directory.
+## Структура проекта
 
-## Exploring Wails3 Features
+```
+main.go              — точка входа: окно, трей, меню
+internal/
+  vault/             — шифрованный сейф: формат COFF, соль, PBKDF2, AES-GCM
+  otp/               — генерация TOTP-кодов
+  app/               — сервисный слой между ядром и UI
+  cmd/cofferctl/     — CLI: create/open/reset
+frontend/
+  src/main.ts        — логика UI
+  index.html, style.css
+```
 
-Now that you have your project set up, it's time to explore the features that Wails3 offers:
+## Формат сейфа
 
-1. **Check out the examples**: The best way to learn is by example. Visit the `examples` directory in the `v3/examples` directory to see various sample applications.
+Файл `coffer.cof` (расположение: `%APPDATA%/Coffer/`):
 
-2. **Run an example**: To run any of the examples, navigate to the example's directory and use:
+```
+magic "COFF" | version | salt | nonce | ciphertext(AES-GCM)
+```
 
-   ```
-   go run .
-   ```
+Ключ шифрования не хранится: он каждый раз выводится из мастер-пароля и соли. Неверный пароль — GCM не расшифрует текст, и отличить «не тот пароль» от «файл испорчен» можно достоверно.
 
-   Note: Some examples may be under development during the alpha phase.
+## Лицензия
 
-3. **Explore the documentation**: Visit the [Wails3 documentation](https://v3.wails.io/) for in-depth guides and API references.
-
-4. **Join the community**: Have questions or want to share your progress? Join the [Wails Discord](https://discord.gg/JDdSxwjhGf) or visit the [Wails discussions on GitHub](https://github.com/wailsapp/wails/discussions).
-
-## Project Structure
-
-Take a moment to familiarize yourself with your project structure:
-
-- `frontend/`: Contains your frontend code (HTML, CSS, JavaScript/TypeScript)
-- `main.go`: The entry point of your Go backend
-- `app.go`: Define your application structure and methods here
-- `wails.json`: Configuration file for your Wails project
-
-## Next Steps
-
-1. Modify the frontend in the `frontend/` directory to create your desired UI.
-2. Add backend functionality in `main.go`.
-3. Use `wails3 dev` to see your changes in real-time.
-4. When ready, build your application with `wails3 build`.
-
-Happy coding with Wails3! If you encounter any issues or have questions, don't hesitate to consult the documentation or reach out to the Wails community.
+MIT
