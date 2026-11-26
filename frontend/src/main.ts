@@ -28,7 +28,6 @@ async function refresh() {
 }
 
 // Поиск без обращения к бэкенду: фильтруем кэш по подстроке.
-// Список всё равно перерисовывается каждую секунду — фильтр живёт там же.
 const $search = document.getElementById('search') as HTMLInputElement;
 $search.addEventListener('input', renderList);
 
@@ -226,21 +225,20 @@ document.getElementById('btn-export')!.addEventListener('click', async () => {
     try {
         const path = await Service.ExportBackup(pw);
         (document.getElementById('backup-password') as HTMLInputElement).value = '';
-        showError(`Копия сохранена: ${path}`);
+        showError(path ? `Копия сохранена: ${path}` : 'Экспорт отменён');
     } catch (e) {
         showError(errText(e));
     }
 });
 
-// --- Импорт резервной копии ---
+// --- Импорт резервной копии: путь выбирается системным диалогом ---
 document.getElementById('btn-import')!.addEventListener('click', async () => {
-    const path = (document.getElementById('import-path') as HTMLInputElement).value.trim();
     const pw = (document.getElementById('import-password') as HTMLInputElement).value;
-    if (!path) { showError('Укажите путь к файлу копии'); return; }
+    if (pw.length < 8) { showError('Пароль копии — минимум 8 символов'); return; }
     try {
-        const added = await Service.ImportBackup(path, pw);
+        const added = await Service.ImportBackup(pw);
         (document.getElementById('import-password') as HTMLInputElement).value = '';
-        showError(added > 0 ? `Добавлено аккаунтов: ${added}` : 'Новых аккаунтов нет — всё уже есть в сейфе');
+        showError(added > 0 ? `Добавлено аккаунтов: ${added}` : 'Импорт отменён или новых аккаунтов нет');
         await refresh();
     } catch (e) {
         showError(errText(e));

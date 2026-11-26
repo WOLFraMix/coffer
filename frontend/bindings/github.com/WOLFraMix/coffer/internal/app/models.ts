@@ -11,3 +11,10 @@ export interface CodeView {
     "code": string;
     "secondsLeft": number;
 }
+
+/**
+ * FilePicker — абстракция системных диалогов выбора файла.
+ * Сервис не знает о Wails: тесты подсовывают фейк, main.go — реальный
+ * адаптер на диалогах Wails.
+ */
+export type FilePicker = any;

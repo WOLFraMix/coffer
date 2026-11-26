@@ -7,5 +7,6 @@ export {
 };
 
 export type {
-    CodeView
+    CodeView,
+    FilePicker
 } from "./models.js";

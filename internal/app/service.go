@@ -38,6 +38,8 @@ type Service struct {
 	entries []vault.Entry // расшифрованные данные — только в памяти
 	open    bool
 
+	picker FilePicker
+
 	lastTouch time.Time     // последнее действие пользователя
 	lockAfter time.Duration // бездействие до автоблокировки
 }
@@ -250,7 +252,8 @@ func (s *Service) viewsLocked(now time.Time) []CodeView {
 }
 
 // ExportBackup — зашифрованный дамп всех записей отдельным паролем.
-// Возвращает путь к файлу, чтобы UI показал его пользователю.
+// Файл запрашивается системным диалогом «Сохранить как»; без диалога
+// (адаптер не подключён) сохраняем в Документы — старое поведение.
 func (s *Service) ExportBackup(password string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -266,33 +269,59 @@ func (s *Service) ExportBackup(password string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
+
+	name := "coffer-backup-" + time.Now().Format("20060102-150405") + ".cofbak"
+	path := ""
+	if s.picker != nil {
+		path, err = s.picker.SaveFile(name)
+		if err != nil {
+			return "", err
+		}
+		if path == "" {
+			return "", nil // отменили диалог — не ошибка
+		}
+	} else {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		dir := filepath.Join(home, "Documents")
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return "", err
+		}
+		path = filepath.Join(dir, name)
 	}
-	dir := filepath.Join(home, "Documents")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", err
-	}
-	path := filepath.Join(dir,
-		fmt.Sprintf("coffer-backup-%s.cofbak", time.Now().Format("20060102-150405")))
-	if err := os.WriteFile(path, data, 0o600); err != nil { //nolint:gosec // путь строим сами из UserHomeDir
+
+	if err := os.WriteFile(path, data, 0o600); err != nil { //nolint:gosec // путь из диалога или UserHomeDir
 		return "", fmt.Errorf("не удалось записать копию: %w", err)
 	}
 	return path, nil
 }
 
-// ImportBackup — читает резервную копию и добавляет записи, которых
-// ещё нет. Дубликаты (сервис+имя+секрет) пропускаются: слияние,
-// а не затирание. Возвращает количество добавленных.
-func (s *Service) ImportBackup(path, password string) (int, error) {
+// ImportBackup — читает резервную копию, выбранную системным диалогом,
+// и добавляет записи, которых ещё нет. Дубликаты пропускаются.
+func (s *Service) ImportBackup(password string) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if !s.open {
 		return 0, errors.New("vault is locked")
 	}
-	raw, err := os.ReadFile(path) //nolint:gosec // путь задаёт пользователь в поле ввода
+	if len(password) < 8 {
+		return 0, errors.New("пароль резервной копии — минимум 8 символов")
+	}
+	if s.picker == nil {
+		return 0, errors.New("выбор файла недоступен: адаптер диалогов не подключён")
+	}
+	path, err := s.picker.OpenFile()
+	if err != nil {
+		return 0, err
+	}
+	if path == "" {
+		return 0, nil // отменили диалог
+	}
+
+	raw, err := os.ReadFile(path) //nolint:gosec // путь выбирает пользователь в диалоге
 	if err != nil {
 		return 0, fmt.Errorf("не удалось прочитать файл: %w", err)
 	}
@@ -312,11 +341,26 @@ func (s *Service) ImportBackup(path, password string) (int, error) {
 	}
 	added := len(s.entries) - before
 	if added == 0 {
-		return 0, nil // нечего писать — сейф не трогаем
+		return 0, nil
 	}
 	if err := s.v.SaveWithKey(s.key, s.entries); err != nil {
-		s.entries = s.entries[:before] // откат при ошибке записи
+		s.entries = s.entries[:before]
 		return 0, fmt.Errorf("не удалось сохранить сейф: %w", err)
 	}
 	return added, nil
+}
+
+// FilePicker — абстракция системных диалогов выбора файла.
+// Сервис не знает о Wails: тесты подсовывают фейк, main.go — реальный
+// адаптер на диалогах Wails.
+type FilePicker interface {
+	SaveFile(defaultName string) (string, error) // "" = пользователь отменил
+	OpenFile() (string, error)                   // "" = пользователь отменил
+}
+
+// SetFilePicker подключает реализацию диалогов (вызывается из main.go).
+func (s *Service) SetFilePicker(fp FilePicker) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.picker = fp
 }

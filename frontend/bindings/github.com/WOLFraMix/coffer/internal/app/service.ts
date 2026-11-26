@@ -38,7 +38,8 @@ export function CreateVault(password: string): $CancellablePromise<void> {
 
 /**
  * ExportBackup — зашифрованный дамп всех записей отдельным паролем.
- * Возвращает путь к файлу, чтобы UI показал его пользователю.
+ * Файл запрашивается системным диалогом «Сохранить как»; без диалога
+ * (адаптер не подключён) сохраняем в Документы — старое поведение.
  */
 export function ExportBackup(password: string): $CancellablePromise<string> {
     return $Call.ByID(2587185500, password);
@@ -52,12 +53,11 @@ export function HasVault(): $CancellablePromise<boolean> {
 }
 
 /**
- * ImportBackup — читает резервную копию и добавляет записи, которых
- * ещё нет. Дубликаты (сервис+имя+секрет) пропускаются: слияние,
- * а не затирание. Возвращает количество добавленных.
+ * ImportBackup — читает резервную копию, выбранную системным диалогом,
+ * и добавляет записи, которых ещё нет. Дубликаты пропускаются.
  */
-export function ImportBackup(path: string, password: string): $CancellablePromise<number> {
-    return $Call.ByID(2554384755, path, password);
+export function ImportBackup(password: string): $CancellablePromise<number> {
+    return $Call.ByID(2554384755, password);
 }
 
 /**
@@ -87,6 +87,13 @@ export function RemoveAccount(id: number): $CancellablePromise<$models.CodeView[
  */
 export function ResetVault(): $CancellablePromise<void> {
     return $Call.ByID(3353867277);
+}
+
+/**
+ * SetFilePicker подключает реализацию диалогов (вызывается из main.go).
+ */
+export function SetFilePicker(fp: $models.FilePicker): $CancellablePromise<void> {
+    return $Call.ByID(4137555952, fp);
 }
 
 /**
