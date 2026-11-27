@@ -38,6 +38,7 @@ func main() {
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},
 	})
+	svc.SetFilePicker(wailsPicker{a: a})
 
 	win := a.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            "Coffer",
@@ -132,4 +133,35 @@ func trayIcon() []byte {
 		return nil
 	}
 	return buf.Bytes()
+}
+
+// wailsPicker — адаптер системных диалогов Wails под интерфейс
+// app.FilePicker. Всё знание о Wails-диалогах живёт здесь.
+type wailsPicker struct {
+	a *application.App
+}
+
+func (p wailsPicker) SaveFile(defaultName string) (string, error) {
+	d := p.a.Dialog.SaveFileWithOptions(&application.SaveFileDialogOptions{
+		Title:                "Сохранить резервную копию",
+		Filename:             defaultName,
+		CanCreateDirectories: true,
+		Filters: []application.FileFilter{
+			{DisplayName: "Резервная копия Coffer", Pattern: "*.cofbak"},
+		},
+	})
+	return d.PromptForSingleSelection()
+}
+
+func (p wailsPicker) OpenFile() (string, error) {
+	d := p.a.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
+		Title:                "Выберите резервную копию",
+		CanChooseFiles:       true,
+		CanChooseDirectories: false,
+		CanCreateDirectories: true,
+		Filters: []application.FileFilter{
+			{DisplayName: "Резервная копия Coffer", Pattern: "*.cofbak"},
+		},
+	})
+	return d.PromptForSingleSelection()
 }
