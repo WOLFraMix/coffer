@@ -1,5 +1,11 @@
 # 🔐 Coffer
 
+[![CI](https://img.shields.io/github/actions/workflow/status/WOLFraMix/coffer/ci.yml?branch=main&label=CI&style=flat-square)](https://github.com/WOLFraMix/coffer/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/WOLFraMix/coffer?include_prereleases&style=flat-square)](https://github.com/WOLFraMix/coffer/releases)
+[![Go](https://img.shields.io/badge/go-1.25%2B-00ADD8?logo=go&logoColor=white&style=flat-square)](https://go.dev)
+[![Wails](https://img.shields.io/badge/Wails-v3-DF2667?style=flat-square)](https://wails.io)
+[![License](https://img.shields.io/github/license/WOLFraMix/coffer?style=flat-square)](LICENSE)
+
 Локальный аутентификатор 2FA: коды TOTP без облаков. Ваша копия — ваши ключи: секреты хранятся в шифрованном сейфе на вашем диске, ни один сервер ничего не знает.
 
 ## Возможности
