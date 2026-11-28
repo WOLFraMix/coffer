@@ -1,51 +1,55 @@
 name: CI
 
 on:
-    push:
-        branches: [main]
-    pull_request:
+  push:
+    branches: [main]
+  pull_request:
 
 jobs:
-    test:
-        name: Test & vet
-        runs-on: ubuntu-latest
-        steps:
-            - uses: actions/checkout@v4
+  test:
+    name: Test & vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-            - uses: actions/setup-go@v5
-              with:
-                  go-version: stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
 
-            - name: Go vet
-              run: go vet ./...
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts
 
-            - name: Go test
-              run: go test ./... -count=1 -race
+      - name: Frontend build
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
 
-            - name: Frontend build
-              working-directory: frontend
-              run: |
-                  npm ci
-                  npm run build
+      - name: Go vet
+        run: go vet ./...
 
-    build-windows:
-        name: Build (Windows)
-        runs-on: windows-latest
-        steps:
-            - uses: actions/checkout@v4
+      - name: Go test
+        run: go test ./... -count=1 -race
 
-            - uses: actions/setup-go@v5
-              with:
-                  go-version: stable
+  build-windows:
+    name: Build (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
 
-            - name: Install wails3 CLI
-              run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.1.0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
 
-            - name: Build
-              run: wails3 build -production
+      - name: Install wails3 CLI
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.1.0
 
-            - name: Upload artifact
-              uses: actions/upload-artifact@v4
-              with:
-                  name: coffer-windows-amd64
-                  path: bin/coffer.exe
+      - name: Build
+        run: wails3 build -production
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coffer-windows-amd64
+          path: bin/coffer.exe
